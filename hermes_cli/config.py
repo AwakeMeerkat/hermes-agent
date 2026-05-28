@@ -1391,6 +1391,17 @@ DEFAULT_CONFIG = {
         "turn_completion_explainer": True,
         "show_cost": False,       # Show $ cost in the status bar (off by default)
         "skin": "default",
+        # Classic CLI: keep the terminal/tab title in sync with the Hermes
+        # session title.  ``auto`` prefers Konsole DBus, then tmux, then the
+        # standard OSC title escape used by most graphical terminals.
+        "terminal_title": {
+            "enabled": True,
+            "mode": "auto",              # auto | konsole | tmux | osc | off
+            "prefix": "Hermes: ",
+            "fallback_title": "Hermes",
+            "max_length": 50,
+            "update_on_start": True,
+        },
         # UI language for static user-facing messages (approval prompts, a
         # handful of gateway slash-command replies).  Does NOT affect agent
         # responses, log lines, tool outputs, or slash-command descriptions.

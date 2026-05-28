@@ -173,7 +173,8 @@ from hermes_cli.browser_connect import (
     try_launch_chrome_debug,
 )
 from hermes_cli.env_loader import load_hermes_dotenv
-from utils import base_url_host_matches
+from hermes_cli.terminal_title import TerminalTitleManager
+from utils import base_url_host_matches, is_truthy_value
 
 _hermes_home = get_hermes_home()
 _project_env = Path(__file__).parent / '.env'
@@ -456,6 +457,14 @@ def load_cli_config() -> Dict[str, Any]:
             "persistent_output_max_lines": 200,
 
             "skin": "default",
+            "terminal_title": {
+                "enabled": True,
+                "mode": "auto",
+                "prefix": "Hermes: ",
+                "fallback_title": "Hermes",
+                "max_length": 50,
+                "update_on_start": True,
+            },
         },
         "clarify": {
             "timeout": 120,  # Seconds to wait for a clarify answer before auto-proceeding
@@ -3152,6 +3161,10 @@ class HermesCLI:
         if self.final_response_markdown not in {"render", "strip", "raw"}:
             self.final_response_markdown = "strip"
 
+        self._terminal_title = TerminalTitleManager.from_config(CLI_CONFIG)
+        if self._terminal_title.config.update_on_start:
+            self._terminal_title.set_context_title(None)
+
         # Inline diff previews for write actions (display.inline_diffs in config.yaml)
         self._inline_diffs_enabled = CLI_CONFIG["display"].get("inline_diffs", True)
 
@@ -5035,6 +5048,14 @@ class HermesCLI:
         except Exception:
             pass
 
+    def _set_terminal_context_title(self, title: str | None) -> None:
+        """Best-effort update of the terminal/tab title for this CLI session."""
+        try:
+            if hasattr(self, "_terminal_title") and self._terminal_title:
+                self._terminal_title.set_context_title(title)
+        except Exception:
+            logger.debug("terminal title update failed", exc_info=True)
+
     def _init_agent(self, *, model_override: str = None, runtime_override: dict = None, request_overrides: dict | None = None) -> bool:
         """
         Initialize the agent on first use.
@@ -5113,6 +5134,7 @@ class HermesCLI:
                 title_part = ""
                 if session_meta.get("title"):
                     title_part = f" \"{session_meta['title']}\""
+                    self._set_terminal_context_title(session_meta.get("title"))
                 if _quiet_mode:
                     print(
                         f"↻ Resumed session {self.session_id}{title_part} "
@@ -5227,6 +5249,7 @@ class HermesCLI:
                     self.agent._ensure_db_session()
                     if self.agent._session_db_created:
                         self._session_db.set_session_title(self.session_id, self._pending_title)
+                        self._set_terminal_context_title(self._pending_title)
                         _cprint(f"  Session title applied: {self._pending_title}")
                         self._pending_title = None
                     # else: row creation failed transiently — keep _pending_title for retry
@@ -5449,6 +5472,7 @@ class HermesCLI:
             title_part = ""
             if session_meta.get("title"):
                 title_part = f' "{session_meta["title"]}"'
+                self._set_terminal_context_title(session_meta.get("title"))
             accent_color = _accent_hex()
             self._console_print(
                 f"[{accent_color}]↻ Resumed session [bold]{self.session_id}[/bold]"
@@ -6751,6 +6775,7 @@ class HermesCLI:
                 print(f"(^_^)v New session started: {title}")
             else:
                 print("(^_^)v New session started!")
+        self._set_terminal_context_title(title)
 
     def _handle_handoff_command(self, cmd_original: str) -> bool:
         """Handle ``/handoff <platform>`` — transfer this CLI session to a gateway platform.
@@ -7040,6 +7065,7 @@ class HermesCLI:
                 pass
 
         title_part = f" \"{session_meta['title']}\"" if session_meta.get("title") else ""
+        self._set_terminal_context_title(session_meta.get("title"))
         msg_count = len([m for m in self.conversation_history if m.get("role") == "user"])
         if self.conversation_history:
             _cprint(
@@ -7214,6 +7240,7 @@ class HermesCLI:
         self.session_start = now
         self._pending_title = None
         self._resumed = True  # Prevents auto-title generation
+        self._set_terminal_context_title(branch_title)
         _sync_process_session_id(new_session_id)
 
         # Sync the agent
@@ -8866,6 +8893,7 @@ class HermesCLI:
                             # Session exists in DB — set title directly
                             try:
                                 if self._session_db.set_session_title(self.session_id, new_title):
+                                    self._set_terminal_context_title(new_title)
                                     _cprint(f"  Session title set: {new_title}")
                                 else:
                                     _cprint("  Session not found in database.")
@@ -8879,6 +8907,7 @@ class HermesCLI:
                                 _cprint(f"  Title '{new_title}' is already in use by session {existing['id']}")
                             else:
                                 self._pending_title = new_title
+                                self._set_terminal_context_title(new_title)
                                 _cprint(f"  Session title queued: {new_title} (will be saved on first message)")
                     else:
                         from hermes_state import format_session_db_unavailable
@@ -12567,6 +12596,7 @@ class HermesCLI:
                             "api_key": self.api_key,
                             "api_mode": self.api_mode,
                         },
+                        title_callback=self._set_terminal_context_title,
                     )
                 except Exception:
                     pass
