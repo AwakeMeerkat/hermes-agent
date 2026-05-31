@@ -5400,7 +5400,13 @@ class HermesCLI:
             logger.debug("early terminal title update failed", exc_info=True)
 
     def _compact_early_title_source(self, message) -> str | None:
-        """Derive a short, title-like preview from the user's raw message."""
+        """Derive a short, title-like preview from the user's raw message.
+
+        Uses a fast LLM call (same auxiliary client as auto-title generation)
+        so the title captures intent rather than just the first few words.
+        Falls back to a simple truncation if the LLM call fails or is slow.
+        """
+        # Extract the text content from the message.
         text = None
         if isinstance(message, str):
             text = message
@@ -5421,52 +5427,47 @@ class HermesCLI:
         if not text:
             return None
 
-        text = re.sub(
-            r"^(?:please\s+|kindly\s+)?(?:can you|could you|would you|will you|please|help me|i need you to|i want you to)\s+",
-            "",
-            text,
-            flags=re.IGNORECASE,
-        )
-        text = re.sub(
-            r"^(?:create|build|make|add|fix|update|change|implement|write|review|check|improve|set up|setup|generate)\s+(?:a|an|the|my)?\s*",
-            "",
-            text,
-            flags=re.IGNORECASE,
-        )
-        text = text.strip("-–—:;,. ")
-        if not text:
-            return None
+        # Try LLM-based title generation (fast, ~1s on most setups).
+        try:
+            from agent.auxiliary_client import call_llm
 
-        for separator in (". ", " — ", " – ", " - ", ": ", "; ", " | "):
-            if separator in text:
-                text = text.split(separator, 1)[0].strip()
-                break
+            prompt = (
+                "Summarize what the user wants to accomplish in 2-4 words. "
+                "Return ONLY the summary text — no quotes, no punctuation at the end, "
+                "no prefixes like 'Title:'. Focus on the action/task, not pleasantries. "
+                "Example: 'Move memories to skills' or 'Debug Python import error'."
+            )
+            messages = [
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": text[:500]},
+            ]
+            response = call_llm(
+                task="early_title",
+                messages=messages,
+                max_tokens=20,
+                temperature=0.2,
+                timeout=2.5,
+                main_runtime=None,
+            )
+            title = (response.choices[0].message.content or "").strip()
+            # Clean up the LLM output.
+            title = title.strip('"\'')
+            if title.lower().startswith("title:"):
+                title = title[6:].strip()
+            title = title.strip("-–—:;,. ")
+            if title and len(title) <= 60:
+                return title
+        except Exception:
+            logger.debug("LLM early-title generation failed, falling back to truncation", exc_info=True)
 
+        # Fallback: first few meaningful words (same logic as title_generator truncation).
         words = text.split()
         if not words:
             return None
-
-        letters = [ch for ch in text if ch.isalpha()]
-        upper_ratio = (sum(1 for ch in letters if ch.isupper()) / len(letters)) if letters else 0.0
-        char_cap = 10 if upper_ratio >= 0.35 else 12
-        word_cap = 1 if upper_ratio >= 0.35 else 2
-
-        compact_words: list[str] = []
-        for word in words[:word_cap]:
-            candidate = " ".join(compact_words + [word])
-            if len(candidate) > char_cap:
-                break
-            compact_words.append(word)
-
-        if not compact_words:
-            compact = words[0][:char_cap]
-        else:
-            compact = " ".join(compact_words)
-
-        compact = compact.strip("-–—:;,. ")
-        if len(compact) > char_cap:
-            compact = compact[: max(1, char_cap - 1)].rstrip() + "…"
-        return compact or None
+        result = " ".join(words[:4])
+        if len(result) > 30:
+            result = result[:28].rstrip() + "…"
+        return result
 
     def _init_agent(self, *, model_override: str = None, runtime_override: dict = None, request_overrides: dict | None = None) -> bool:
         """
