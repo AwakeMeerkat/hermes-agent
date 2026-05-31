@@ -3481,6 +3481,7 @@ class HermesCLI:
         # Background task tracking: {task_id: threading.Thread}
         self._background_tasks: Dict[str, threading.Thread] = {}
         self._background_task_counter = 0
+        self._pending_gflash_note = None
 
     def _invalidate(self, min_interval: float = 0.25) -> None:
         """Throttled UI repaint — prevents terminal blinking on slow/SSH connections."""
@@ -9742,6 +9743,27 @@ class HermesCLI:
                 if not response and result and result.get("error"):
                     response = f"Error: {result['error']}"
 
+                if response:
+                    # Queue a one-shot note for the NEXT user turn. The CLI's
+                    # agent loop prepends ``_pending_gflash_note`` (if set) to the
+                    # API-call-local message at ~L12167, then clears it — same
+                    # pattern as the model-switch and skills-reload notes.
+                    # Nothing is written to conversation_history here, so this
+                    # avoids wasting an extra Hermes turn while still making the
+                    # research available as context for the user's next prompt.
+                    new_gflash_note = (
+                        "[USER INITIATED /gflash RESEARCH NOTE: Use this as context "
+                        "for the next user turn only, then ignore it.\n\n"
+                        f"Query: {prompt}\n\n"
+                        f"{response}\n"
+                        "]"
+                    )
+                    existing_gflash_note = getattr(self, "_pending_gflash_note", None)
+                    if existing_gflash_note:
+                        self._pending_gflash_note = existing_gflash_note + "\n\n" + new_gflash_note
+                    else:
+                        self._pending_gflash_note = new_gflash_note
+
                 if self._app:
                     self._app.invalidate()
                     time.sleep(0.05)
@@ -12775,6 +12797,12 @@ class HermesCLI:
                 if _srn:
                     agent_message = _prepend_note_to_message(agent_message, _srn)
                     self._pending_skills_reload_note = None
+                # Prepend pending /gflash research so the next prompt can use
+                # the Gemini output as context without burning an extra turn.
+                _gfn = getattr(self, '_pending_gflash_note', None)
+                if _gfn:
+                    agent_message = _gfn + "\n\n" + agent_message
+                    self._pending_gflash_note = None
                 try:
                     result = self.agent.run_conversation(
                         user_message=agent_message,
