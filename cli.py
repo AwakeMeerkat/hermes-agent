@@ -27,6 +27,7 @@ import logging
 import asyncio
 import os
 import shutil
+import subprocess
 import sys
 import json
 import re
@@ -5099,8 +5100,11 @@ class HermesCLI:
     def _looks_like_code_task(user_message: str) -> bool:
         """Return True when the turn looks like coding work.
 
-        The heuristic is intentionally conservative: we only route away from
-        Hermes when there is a strong signal that the request is code-centric.
+        The goal is to route clearly code-centric prompts to a visible Claude
+        Code worker without forcing the user to restate that they want code.
+        We therefore bias toward recall over perfect precision, while still
+        requiring either a code action plus code-ish nouns or explicit code
+        structure/path signals.
         """
         if not isinstance(user_message, str):
             return False
@@ -5109,24 +5113,38 @@ class HermesCLI:
             return False
 
         lower = text.lower()
-        score = 0
 
-        if re.search(r"\b(fix|debug|implement|refactor|write|add|update|modify|patch|port|optimize|rewrite|build|test|review)\b", lower):
-            score += 2
-        if re.search(r"\b(bug|error|exception|traceback|stack trace|failing test|test failure|regression|compile|lint|type error)\b", lower):
-            score += 2
-        if re.search(r"\b(def|class|import|from|function|const|let|var|async|await|return|package|module)\b", lower):
-            score += 1
-        if re.search(r"\.(py|ts|tsx|js|jsx|rs|go|java|cpp|cc|c|h|hpp|rb|php|sh|yaml|yml|json|toml|md)\b", lower):
-            score += 2
-        if re.search(r"\b(src|test|tests|spec|app|cli|api|server|client|repo|repository|module|package|file|folder|directory)\b", lower):
-            score += 1
-        if "```" in text or re.search(r"`[^`]+`", text):
-            score += 1
-        if re.search(r"(/|\\)(?:[\w.-]+/)+[\w.-]+", text):
-            score += 2
+        action_hit = bool(
+            re.search(
+                r"\b(fix|debug|implement|refactor|write|add|update|modify|patch|port|optimize|rewrite|build|create|convert|migrate|remove|replace|clean up|review|test)\b",
+                lower,
+            )
+        )
+        code_domain_hit = bool(
+            re.search(
+                r"\b("  # common code concepts / product surfaces
+                r"bug|error|exception|traceback|stack trace|regression|compile|lint|type error|"
+                r"code|coding|software|script|function|method|class|module|package|component|service|handler|route|worker|job|pipeline|automation|"
+                r"api|endpoint|cli|ui|frontend|backend|database|db|sql|schema|query|auth|login|parser|parse|cache|caching|search|config|"
+                r"test|tests|spec|feature|flow|workflow|integration|performance|migration"
+                r")\b",
+                lower,
+            )
+        )
+        structure_hit = bool(
+            re.search(r"\.(py|ts|tsx|js|jsx|rs|go|java|cpp|cc|c|h|hpp|rb|php|sh|yaml|yml|json|toml|md)\b", lower)
+            or re.search(r"(/|\\)(?:[\w.-]+/)+[\w.-]+", text)
+            or "```" in text
+            or re.search(r"`[^`]+`", text)
+            or re.search(r"\b(def|class|import|from|const|let|var|async|await|return|package|module)\b", lower)
+        )
+        problem_hit = bool(
+            re.search(r"\b(bug|error|exception|traceback|stack trace|failing test|test failure|regression|compile|lint|type error)\b", lower)
+        )
 
-        return score >= 3
+        if structure_hit or problem_hit:
+            return True
+        return action_hit and code_domain_hit
 
     def _resolve_code_offload_route(self, user_message: str) -> dict | None:
         """Return a Claude Code worker plan for code-heavy turns.

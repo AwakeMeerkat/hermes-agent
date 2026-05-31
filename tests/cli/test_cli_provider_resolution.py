@@ -516,6 +516,21 @@ def test_openai_orchestrator_routes_code_tasks_to_claude(monkeypatch):
     assert route["code_offload"]["model"] in {"haiku", "sonnet", "opus"}
 
 
+def test_openai_orchestrator_routes_implement_style_code_tasks_to_claude(monkeypatch):
+    cli = _import_cli()
+
+    shell = cli.HermesCLI(model="gpt-5.4-mini", compact=True, max_turns=1)
+    shell.provider = "openai"
+    shell.base_url = "https://api.openai.com/v1"
+    shell.api_key = "sk-test"
+
+    route = shell._resolve_turn_agent_config("Implement caching for search results")
+
+    assert route["code_offload"] is not None
+    assert route["code_offload"]["worker"] == "claude-code"
+    assert route["code_offload"]["visible"] is True
+
+
 def test_non_openai_orchestrator_does_not_route_code_tasks(monkeypatch):
     cli = _import_cli()
 
