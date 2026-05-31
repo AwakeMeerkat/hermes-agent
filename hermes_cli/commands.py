@@ -97,7 +97,7 @@ COMMAND_REGISTRY: list[CommandDef] = [
                gateway_only=True, args_hint="[session|always]"),
     CommandDef("deny", "Deny a pending dangerous command", "Session",
                gateway_only=True),
-    CommandDef("gflash", "Gemini 2.0 Flash one-shot web search (clean context)", "Session",
+    CommandDef("gflash", "Gemini 2.5 Flash one-shot web search (clean context)", "Session",
                aliases=("gf", "gemini"), args_hint="<query>"),
     CommandDef("background", "Run a prompt in the background", "Session",
                aliases=("bg", "btw"), args_hint="<prompt>"),

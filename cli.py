@@ -9516,9 +9516,9 @@ class HermesCLI:
         thread.start()
 
     def _handle_gflash_command(self, cmd: str):
-        """Handle /gflash <query> — one-shot Gemini 2.0 Flash web search with clean context.
+        """Handle /gflash <query> — one-shot Gemini 2.5 Flash web search with clean context.
 
-        Spawns a background AIAgent using the Google Gemini provider (gemini-2.0-flash)
+        Spawns a background AIAgent using the Google Gemini provider (gemini-2.5-flash)
         with only the web/search toolset. No memory, no session context, no skills —
         just the query sent to Gemini's API. Results appear inline when done.
 
@@ -9530,7 +9530,7 @@ class HermesCLI:
         if len(parts) < 2 or not parts[1].strip():
             _cprint("  Usage: /gflash <query>")
             _cprint("  Example: /gflash latest news on AI agents")
-            _cprint("  Runs a clean Gemini 2.0 Flash web search and returns the summary.")
+            _cprint("  Runs a clean Gemini 2.5 Flash web search and returns the summary.")
             return
 
         prompt = parts[1].strip()
@@ -9547,7 +9547,7 @@ class HermesCLI:
         task_num = self._background_task_counter
         task_id = f"gflash_{datetime.now().strftime('%H%M%S')}_{uuid.uuid4().hex[:6]}"
 
-        _cprint(f"  🔍 Gemini 2.0 Flash search #{task_num}: \"{prompt[:60]}{'...' if len(prompt) > 60 else ''}\"")
+        _cprint(f"  🔍 Gemini 2.5 Flash search #{task_num}: \"{prompt[:60]}{'...' if len(prompt) > 60 else ''}\"")
         _cprint("  Running in background — results will appear when done.\n")
 
         def run_gflash():
@@ -9559,7 +9559,7 @@ class HermesCLI:
                 pass
             try:
                 gflash_agent = AIAgent(
-                    model="gemini-2.0-flash",
+                    model="gemini-2.5-flash",
                     api_key=google_key,
                     base_url="https://generativelanguage.googleapis.com/v1beta",
                     provider="google",
@@ -9611,7 +9611,7 @@ class HermesCLI:
                     _chat_console = ChatConsole()
                     _chat_console.print(Panel(
                         _render_final_assistant_content(response, mode=self.final_response_markdown),
-                        title=f"[bold #4285F4]⚡ Gemini 2.0 Flash (search #{task_num})[/]",
+                        title=f"[bold #4285F4]⚡ Gemini 2.5 Flash (search #{task_num})[/]",
                         title_align="left",
                         border_style="#4285F4",
                         style="#E8EAED",
