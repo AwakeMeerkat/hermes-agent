@@ -647,3 +647,5 @@ class TestFallbackNoCallback:
         assert result["approved"] is False
         assert result.get("status") == "pending_approval"
         assert result.get("approval_pending") is True
+        assert "What it appears to do:" in result.get("message", "")
+        assert "delete in root path" in result.get("message", "")

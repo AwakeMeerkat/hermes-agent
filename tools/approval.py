@@ -1062,6 +1062,7 @@ def check_dangerous_command(command: str, env_type: str,
             "description": description,
             "message": (
                 f"⚠️ This command is potentially dangerous ({description}). "
+                f"What it appears to do: {description}. "
                 f"Asking the user for approval.\n\n**Command:**\n```\n{command}\n```"
             ),
         }
@@ -1452,7 +1453,8 @@ def check_all_command_guards(command: str, env_type: str,
             "command": command,
             "description": combined_desc,
             "message": (
-                f"⚠️ {combined_desc}. Asking the user for approval.\n\n**Command:**\n```\n{command}\n```"
+                f"⚠️ {combined_desc}. What it appears to do: {combined_desc}. "
+                f"Asking the user for approval.\n\n**Command:**\n```\n{command}\n```"
             ),
         }
 

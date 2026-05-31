@@ -5056,6 +5056,99 @@ class HermesCLI:
         except Exception:
             logger.debug("terminal title update failed", exc_info=True)
 
+    def _set_early_turn_title(self, message) -> None:
+        """Best-effort provisional title update before the agent starts working."""
+        try:
+            terminal_title = getattr(self, "_terminal_title", None)
+            if not terminal_title or not getattr(terminal_title.config, "update_on_start", False):
+                return
+            if getattr(self, "_pending_title", None):
+                return
+            if getattr(self, "_session_db", None):
+                existing = self._session_db.get_session_title(self.session_id)
+                if existing:
+                    return
+
+            title_source = self._compact_early_title_source(message)
+            if title_source:
+                self._set_terminal_context_title(title_source)
+        except Exception:
+            logger.debug("early terminal title update failed", exc_info=True)
+
+    def _compact_early_title_source(self, message) -> str | None:
+        """Derive a short, title-like preview from the user's raw message."""
+        text = None
+        if isinstance(message, str):
+            text = message
+        elif isinstance(message, list):
+            for part in message:
+                if not isinstance(part, dict):
+                    continue
+                piece = part.get("text")
+                if piece and part.get("type") in {"text", "input_text"}:
+                    text = piece
+                    break
+                if piece and text is None:
+                    text = piece
+        if not text:
+            return None
+
+        text = re.sub(r"\s+", " ", str(text)).strip()
+        if not text:
+            return None
+
+        text = re.sub(
+            r"^(?:please\s+|kindly\s+)?(?:can you|could you|would you|will you|please|help me|i need you to|i want you to)\s+",
+            "",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"^(?:create|build|make|add|fix|update|change|implement|write|review|check|improve|set up|setup|generate)\s+(?:a|an|the|my)?\s*",
+            "",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = text.strip("-–—:;,. ")
+        if not text:
+            return None
+
+        for separator in (". ", " — ", " – ", " - ", ": ", "; ", " | "):
+            if separator in text:
+                text = text.split(separator, 1)[0].strip()
+                break
+
+        words = text.split()
+        if not words:
+            return None
+
+        letters = [ch for ch in text if ch.isalpha()]
+        upper_ratio = (sum(1 for ch in letters if ch.isupper()) / len(letters)) if letters else 0.0
+        char_cap = 16 if upper_ratio >= 0.35 else 22
+        word_cap = 3 if upper_ratio >= 0.35 else 4
+
+        compact_words: list[str] = []
+        for word in words[:word_cap]:
+            candidate = " ".join(compact_words + [word])
+            if len(candidate) > char_cap:
+                break
+            compact_words.append(word)
+
+        if not compact_words:
+            compact = words[0][:char_cap]
+        else:
+            compact = " ".join(compact_words)
+            if len(words) >= 3:
+                head_tail = [words[0], words[1], words[min(len(words) - 1, word_cap - 1)]] if len(words) > 2 else words[:]
+                candidate = " ".join(head_tail)
+                if len(candidate) <= char_cap and len(candidate) > len(compact):
+                    compact = candidate
+
+        compact = compact.strip("-–—:;,. ")
+        if len(compact) > char_cap:
+            compact = compact[: max(1, char_cap - 1)].rstrip() + "…"
+        return compact or None
+
     def _init_agent(self, *, model_override: str = None, runtime_override: dict = None, request_overrides: dict | None = None) -> bool:
         """
         Initialize the agent on first use.
@@ -12151,6 +12244,7 @@ class HermesCLI:
         # Single-query and direct chat callers do not go through run(), so
         # register secure secret capture here as well.
         set_secret_capture_callback(self._secret_capture_callback)
+        _early_title_source = message
 
         # Reset the per-turn interrupt flag. Any subsequent path that
         # discovers an interrupt (below, after run_conversation) will flip
@@ -12175,6 +12269,11 @@ class HermesCLI:
             request_overrides=turn_route.get("request_overrides"),
         ):
             return None
+
+        # Show a provisional title as soon as the turn is accepted so long
+        # tool runs don't leave the tab stuck on the startup title until the
+        # background auto-title pass completes.
+        self._set_early_turn_title(_early_title_source)
         
         # Route image attachments based on the active model's vision capability.
         # "native" → pass pixels as OpenAI-style content parts (adapters
