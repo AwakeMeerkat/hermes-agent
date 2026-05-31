@@ -24,6 +24,7 @@ except ModuleNotFoundError:
     pass
 
 import logging
+import asyncio
 import os
 import shutil
 import sys
@@ -43,6 +44,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Any, Optional
+
+from tools.web_tools import web_extract_tool, web_search_tool
 
 logger = logging.getLogger(__name__)
 
@@ -9515,12 +9518,118 @@ class HermesCLI:
         self._background_tasks[task_id] = thread
         thread.start()
 
-    def _handle_gflash_command(self, cmd: str):
-        """Handle /gflash <query> — one-shot Gemini 2.5 Flash web search with clean context.
+    def _build_gflash_research_packet(
+        self,
+        query: str,
+        search_limit: int = 5,
+        extract_limit: int = 3,
+    ) -> str:
+        """Prefetch search results and page extracts for /gflash.
 
-        Spawns a background AIAgent using the Google Gemini provider (gemini-2.5-flash)
-        with only the web/search toolset. No memory, no session context, no skills —
-        just the query sent to Gemini's API. Results appear inline when done.
+        This emulates the Gemini website's "search then open the top pages"
+        flow by doing the retrieval step in Hermes before the Gemini model
+        synthesizes the answer.
+        """
+        try:
+            search_raw = web_search_tool(query, limit=search_limit)
+            search_data = json.loads(search_raw) if isinstance(search_raw, str) else search_raw
+        except Exception:
+            return ""
+
+        if not isinstance(search_data, dict) or not search_data.get("success"):
+            return ""
+
+        search_results = search_data.get("data", {}).get("web", [])
+        if not isinstance(search_results, list):
+            search_results = []
+
+        seen_urls = set()
+        clean_results = []
+        for result in search_results:
+            if not isinstance(result, dict):
+                continue
+            url = str(result.get("url", "")).strip()
+            if url and url not in seen_urls:
+                seen_urls.add(url)
+                clean_results.append(result)
+
+        if not clean_results:
+            return ""
+
+        lines = [
+            f"Web research packet for query: {query}",
+            "",
+            "Search results:",
+        ]
+
+        urls_to_extract: List[str] = []
+        for idx, result in enumerate(clean_results[:search_limit], start=1):
+            title = str(result.get("title", "")).strip() or "Untitled result"
+            url = str(result.get("url", "")).strip()
+            description = str(result.get("description", "")).strip()
+            lines.append(f"{idx}. {title}")
+            if url:
+                lines.append(f"   URL: {url}")
+            if description:
+                lines.append(f"   Snippet: {description}")
+            lines.append("")
+            if url and len(urls_to_extract) < extract_limit:
+                urls_to_extract.append(url)
+
+        lines.append("Page extracts:")
+
+        if urls_to_extract:
+            try:
+                extract_raw = asyncio.run(
+                    web_extract_tool(
+                        urls_to_extract,
+                        format="markdown",
+                        use_llm_processing=False,
+                    )
+                )
+                extract_data = json.loads(extract_raw) if isinstance(extract_raw, str) else extract_raw
+            except Exception as exc:
+                extract_data = {"success": False, "error": str(exc)}
+
+            if isinstance(extract_data, dict):
+                extracted_results = extract_data.get("results", [])
+                if isinstance(extracted_results, list) and extracted_results:
+                    for idx, result in enumerate(extracted_results, start=1):
+                        if not isinstance(result, dict):
+                            continue
+                        title = str(result.get("title", "")).strip() or f"Page {idx}"
+                        url = str(result.get("url", "")).strip()
+                        error = result.get("error")
+                        content = str(
+                            result.get("content")
+                            or result.get("markdown")
+                            or result.get("text")
+                            or ""
+                        ).strip()
+
+                        lines.append(f"{idx}. {title}")
+                        if url:
+                            lines.append(f"   URL: {url}")
+                        if error:
+                            lines.append(f"   Error: {error}")
+                        elif content:
+                            if len(content) > 3500:
+                                content = content[:3500].rstrip() + "\n[truncated]"
+                            lines.append(textwrap.indent(content, "   "))
+                        lines.append("")
+
+        if lines[-1] == "Page extracts:":
+            lines.append("   (No page extracts available.)")
+
+        return "\n".join(line.rstrip() for line in lines).strip()
+
+    def _handle_gflash_command(self, cmd: str):
+        """Handle /gflash <query> — Gemini 2.5 Flash web research.
+
+        First performs Hermes-side web search + page extraction to mimic the
+        Gemini website's "search and open the top pages" flow, then sends the
+        prefetched research packet to Gemini 2.5 Flash for synthesis. If web
+        prefetch fails, falls back to the older tool-driven flow.
 
         Usage: /gflash <search query>
                /gf <query>       (alias)
@@ -9530,13 +9639,11 @@ class HermesCLI:
         if len(parts) < 2 or not parts[1].strip():
             _cprint("  Usage: /gflash <query>")
             _cprint("  Example: /gflash latest news on AI agents")
-            _cprint("  Runs a clean Gemini 2.5 Flash web search and returns the summary.")
+            _cprint("  Searches the web, opens top pages, and returns a synthesis.")
             return
 
         prompt = parts[1].strip()
 
-        # Ensure Google API key is available
-        import os
         google_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
         if not google_key:
             _cprint("  (>_<) GOOGLE_API_KEY / GEMINI_API_KEY not set in environment.")
@@ -9547,7 +9654,7 @@ class HermesCLI:
         task_num = self._background_task_counter
         task_id = f"gflash_{datetime.now().strftime('%H%M%S')}_{uuid.uuid4().hex[:6]}"
 
-        _cprint(f"  🔍 Gemini 2.5 Flash search #{task_num}: \"{prompt[:60]}{'...' if len(prompt) > 60 else ''}\"")
+        _cprint(f"  🔍 Gemini 2.5 Flash research #{task_num}: \"{prompt[:60]}{'...' if len(prompt) > 60 else ''}\"")
         _cprint("  Running in background — results will appear when done.\n")
 
         def run_gflash():
@@ -9558,37 +9665,70 @@ class HermesCLI:
             except Exception:
                 pass
             try:
-                gflash_agent = AIAgent(
-                    model="gemini-2.5-flash",
-                    api_key=google_key,
-                    base_url="https://generativelanguage.googleapis.com/v1beta",
-                    provider="google",
-                    api_mode="chat_completions",
-                    max_iterations=15,
-                    enabled_toolsets=["web"],
-                    quiet_mode=True,
-                    verbose_logging=False,
-                    session_id=task_id,
-                    platform="cli",
-                    skip_memory=True,
-                    skip_context_files=True,
-                )
-                gflash_agent._print_fn = lambda *_a, **_kw: None
+                research_packet = self._build_gflash_research_packet(prompt)
+                if research_packet:
+                    gflash_agent = AIAgent(
+                        model="gemini-2.5-flash",
+                        api_key=google_key,
+                        base_url="https://generativelanguage.googleapis.com/v1beta",
+                        provider="google",
+                        api_mode="chat_completions",
+                        max_iterations=2,
+                        enabled_toolsets=[],
+                        quiet_mode=True,
+                        verbose_logging=False,
+                        session_id=task_id,
+                        platform="cli",
+                        skip_memory=True,
+                        skip_context_files=True,
+                    )
+                    gflash_agent._print_fn = lambda *_a, **_kw: None  # type: ignore[attr-defined]
 
-                def _gflash_thinking(text: str) -> None:
-                    if not self._agent_running:
-                        self._spinner_text = text
-                        if self._app:
-                            self._app.invalidate()
+                    def _gflash_thinking(text: str) -> None:
+                        if not self._agent_running:
+                            self._spinner_text = text
+                            if self._app:
+                                self._app.invalidate()
 
-                gflash_agent.thinking_callback = _gflash_thinking
+                    gflash_agent.thinking_callback = _gflash_thinking  # type: ignore[attr-defined]
+                    search_prompt = (
+                        "Use the pre-fetched web research packet below to answer the user's query. "
+                        "Do not claim additional browsing beyond this packet. "
+                        "Synthesize the search results and page extracts, and cite URLs where possible.\n\n"
+                        f"User query: {prompt}\n\n"
+                        f"{research_packet}"
+                    )
+                else:
+                    gflash_agent = AIAgent(
+                        model="gemini-2.5-flash",
+                        api_key=google_key,
+                        base_url="https://generativelanguage.googleapis.com/v1beta",
+                        provider="google",
+                        api_mode="chat_completions",
+                        max_iterations=15,
+                        enabled_toolsets=["web"],
+                        quiet_mode=True,
+                        verbose_logging=False,
+                        session_id=task_id,
+                        platform="cli",
+                        skip_memory=True,
+                        skip_context_files=True,
+                    )
+                    gflash_agent._print_fn = lambda *_a, **_kw: None  # type: ignore[attr-defined]
 
-                search_prompt = (
-                    f"Web search and summarize: {prompt}\n\n"
-                    "Use web search tools to find current, relevant information. "
-                    "Provide a concise, well-organized summary with key facts and sources. "
-                    "Be factual and cite URLs where possible."
-                )
+                    def _gflash_thinking(text: str) -> None:
+                        if not self._agent_running:
+                            self._spinner_text = text
+                            if self._app:
+                                self._app.invalidate()
+
+                    gflash_agent.thinking_callback = _gflash_thinking  # type: ignore[attr-defined]
+                    search_prompt = (
+                        f"Web search and summarize: {prompt}\n\n"
+                        "Use web search tools to find current, relevant information. "
+                        "Provide a concise, well-organized summary with key facts and sources. "
+                        "Be factual and cite URLs where possible."
+                    )
 
                 result = gflash_agent.run_conversation(
                     user_message=search_prompt,
@@ -9611,7 +9751,7 @@ class HermesCLI:
                     _chat_console = ChatConsole()
                     _chat_console.print(Panel(
                         _render_final_assistant_content(response, mode=self.final_response_markdown),
-                        title=f"[bold #4285F4]⚡ Gemini 2.5 Flash (search #{task_num})[/]",
+                        title=f"[bold #4285F4]⚡ Gemini 2.5 Flash (research #{task_num})[/]",
                         title_align="left",
                         border_style="#4285F4",
                         style="#E8EAED",
