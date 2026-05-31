@@ -8267,6 +8267,9 @@ class GatewayRunner:
         if canonical == "debug":
             return await self._handle_debug_command(event)
 
+        if canonical == "wn":
+            return await self._handle_whats_new_command(event)
+
         if canonical == "title":
             return await self._handle_title_command(event)
 
@@ -14935,6 +14938,74 @@ class GatewayRunner:
             return "\n".join(lines)
 
         return await loop.run_in_executor(None, _collect_and_upload)
+
+    async def _handle_whats_new_command(self, event: MessageEvent) -> str:
+        """Handle /wn — show what's new between current checkout and origin/main.
+
+        Returns a plain-text summary suitable for messaging platforms.
+        """
+        import asyncio
+        import subprocess
+        from pathlib import Path
+
+        project_root = Path(__file__).parent.parent.resolve()
+
+        def _run_git(*args):
+            try:
+                result = subprocess.run(
+                    ["git", "-C", str(project_root), *args],
+                    capture_output=True, text=True, timeout=30,
+                )
+                return result.stdout.strip()
+            except Exception as exc:
+                return f"(error: {exc})"
+
+        _run_git("fetch", "origin", "--quiet")
+
+        branch_check = _run_git("rev-parse", "--abbrev-ref", "HEAD")
+        remote_check = _run_git("rev-parse", "origin/main")
+
+        if remote_check.startswith("(error"):
+            return (
+                "Could not find origin/main.\n"
+                f"Remotes: {_run_git('branch', '-r')}"
+            )
+
+        local_sha = _run_git("rev-parse", "--short", "HEAD")
+        remote_sha = _run_git("rev-parse", "--short", "origin/main")
+
+        lines = []
+        lines.append(f"Local:  {local_sha}  ({branch_check})")
+        lines.append(f"Remote: {remote_sha}  (origin/main)")
+        lines.append("")
+
+        ahead_behind = _run_git("rev-list", "--left-right", "--count", "HEAD...origin/main")
+        if ahead_behind and not ahead_behind.startswith("(error"):
+            parts = ahead_behind.split()
+            if len(parts) == 2:
+                behind, ahead = int(parts[0]), int(parts[1])
+                if behind == 0 and ahead == 0:
+                    return "You're up to date!"
+                lines.append(f"You are {behind} commit(s) behind, {ahead} commit(s) ahead")
+                lines.append("")
+
+        commits = _run_git("log", "HEAD..origin/main", "--oneline", "--no-merges", "--decorate")
+        if commits and not commits.startswith("(error"):
+            commit_lines = commits.splitlines()
+            lines.append(f"{len(commit_lines)} new commit(s):")
+            lines.append("")
+            for line in commit_lines:
+                lines.append(f"  {line}")
+            lines.append("")
+
+        diff_stat = _run_git("diff", "HEAD..origin/main", "--stat")
+        if diff_stat and not diff_stat.startswith("(error"):
+            lines.append("Files changed:")
+            lines.append("")
+            for line in diff_stat.splitlines():
+                lines.append(f" {line}")
+
+        return "\n".join(lines)
 
     async def _handle_update_command(self, event: MessageEvent) -> str:
         """Handle /update command — update Hermes Agent to the latest version.
