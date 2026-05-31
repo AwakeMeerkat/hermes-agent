@@ -5448,8 +5448,8 @@ class HermesCLI:
 
         letters = [ch for ch in text if ch.isalpha()]
         upper_ratio = (sum(1 for ch in letters if ch.isupper()) / len(letters)) if letters else 0.0
-        char_cap = 16 if upper_ratio >= 0.35 else 18
-        word_cap = 2 if upper_ratio >= 0.35 else 3
+        char_cap = 10 if upper_ratio >= 0.35 else 12
+        word_cap = 1 if upper_ratio >= 0.35 else 2
 
         compact_words: list[str] = []
         for word in words[:word_cap]:
@@ -13354,6 +13354,15 @@ class HermesCLI:
                     )
                 except Exception:
                     pass
+
+            # Refresh terminal title after every completed turn so the tab
+            # always reflects the current topic, not just the first exchange.
+            if response and not result.get("failed") and not result.get("interrupted"):
+                _post_title = self._compact_early_title_source(
+                    message if isinstance(message, str) else _early_title_source
+                ) if message else None
+                if _post_title:
+                    self._set_terminal_context_title(_post_title)
 
             # Handle failed or partial results (e.g., non-retryable errors, rate limits,
             # truncated output, invalid tool calls). Both "failed" and "partial" with

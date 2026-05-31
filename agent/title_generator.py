@@ -5,6 +5,7 @@ adds latency to the user-facing reply.
 """
 
 import logging
+import re
 import threading
 from typing import Callable, Optional
 
@@ -20,9 +21,10 @@ FailureCallback = Callable[[str, BaseException], None]
 TitleCallback = Callable[[str], None]
 
 _TITLE_PROMPT = (
-    "Generate a short, descriptive title (3-7 words) for a conversation that starts with the "
+    "Generate a short, descriptive title (2-4 words) for a conversation that starts with the "
     "following exchange. The title should capture the main topic or intent. "
-    "Return ONLY the title text, nothing else. No quotes, no punctuation at the end, no prefixes."
+    "Return ONLY the title text, nothing else. No quotes, no punctuation at the end, no prefixes. "
+    "Do NOT include the word 'Hermes' in the title."
 )
 
 
@@ -67,9 +69,18 @@ def generate_title(
         title = title.strip('"\'')
         if title.lower().startswith("title:"):
             title = title[6:].strip()
+        # Strip "Hermes" prefix/suffix if the LLM snuck it in
+        if title.lower().startswith("hermes"):
+            title = re.sub(r"^hermes\s*[:\-–—]?\s*", "", title, flags=re.IGNORECASE).strip()
+        if not title:
+            return None
         # Enforce reasonable length
-        if len(title) > 80:
-            title = title[:77] + "..."
+        if len(title) > 60:
+            title = title[:57] + "..."
+        # Enforce short word count
+        title_words = title.split()
+        if len(title_words) > 4:
+            title = " ".join(title_words[:4])
         return title if title else None
     except Exception as e:
         # Log at WARNING so this shows up in agent.log without debug mode.
