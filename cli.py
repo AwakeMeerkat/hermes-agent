@@ -9174,6 +9174,8 @@ class HermesCLI:
             self._handle_stop_command()
         elif canonical == "agents":
             self._handle_agents_command()
+        elif canonical == "gflash":
+            self._handle_gflash_command(cmd_original)
         elif canonical == "background":
             self._handle_background_command(cmd_original)
         elif canonical == "queue":
@@ -9510,6 +9512,140 @@ class HermesCLI:
                     self._invalidate(min_interval=0)
 
         thread = threading.Thread(target=run_background, daemon=True, name=f"bg-task-{task_id}")
+        self._background_tasks[task_id] = thread
+        thread.start()
+
+    def _handle_gflash_command(self, cmd: str):
+        """Handle /gflash <query> — one-shot Gemini 2.0 Flash web search with clean context.
+
+        Spawns a background AIAgent using the Google Gemini provider (gemini-2.0-flash)
+        with only the web/search toolset. No memory, no session context, no skills —
+        just the query sent to Gemini's API. Results appear inline when done.
+
+        Usage: /gflash <search query>
+               /gf <query>       (alias)
+               /gemini <query>   (alias)
+        """
+        parts = cmd.strip().split(maxsplit=1)
+        if len(parts) < 2 or not parts[1].strip():
+            _cprint("  Usage: /gflash <query>")
+            _cprint("  Example: /gflash latest news on AI agents")
+            _cprint("  Runs a clean Gemini 2.0 Flash web search and returns the summary.")
+            return
+
+        prompt = parts[1].strip()
+
+        # Ensure Google API key is available
+        import os
+        google_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+        if not google_key:
+            _cprint("  (>_<) GOOGLE_API_KEY / GEMINI_API_KEY not set in environment.")
+            _cprint("  Set it in ~/.hermes/.env or export it before using /gflash.")
+            return
+
+        self._background_task_counter += 1
+        task_num = self._background_task_counter
+        task_id = f"gflash_{datetime.now().strftime('%H%M%S')}_{uuid.uuid4().hex[:6]}"
+
+        _cprint(f"  🔍 Gemini 2.0 Flash search #{task_num}: \"{prompt[:60]}{'...' if len(prompt) > 60 else ''}\"")
+        _cprint("  Running in background — results will appear when done.\n")
+
+        def run_gflash():
+            set_sudo_password_callback(self._sudo_password_callback)
+            set_approval_callback(self._approval_callback)
+            try:
+                set_secret_capture_callback(self._secret_capture_callback)
+            except Exception:
+                pass
+            try:
+                gflash_agent = AIAgent(
+                    model="gemini-2.0-flash",
+                    api_key=google_key,
+                    base_url="https://generativelanguage.googleapis.com/v1beta",
+                    provider="google",
+                    api_mode="chat_completions",
+                    max_iterations=15,
+                    enabled_toolsets=["web"],
+                    quiet_mode=True,
+                    verbose_logging=False,
+                    session_id=task_id,
+                    platform="cli",
+                    skip_memory=True,
+                    skip_context_files=True,
+                )
+                gflash_agent._print_fn = lambda *_a, **_kw: None
+
+                def _gflash_thinking(text: str) -> None:
+                    if not self._agent_running:
+                        self._spinner_text = text
+                        if self._app:
+                            self._app.invalidate()
+
+                gflash_agent.thinking_callback = _gflash_thinking
+
+                search_prompt = (
+                    f"Web search and summarize: {prompt}\n\n"
+                    "Use web search tools to find current, relevant information. "
+                    "Provide a concise, well-organized summary with key facts and sources. "
+                    "Be factual and cite URLs where possible."
+                )
+
+                result = gflash_agent.run_conversation(
+                    user_message=search_prompt,
+                    task_id=task_id,
+                )
+
+                response = result.get("final_response", "") if result else ""
+                if not response and result and result.get("error"):
+                    response = f"Error: {result['error']}"
+
+                if self._app:
+                    self._app.invalidate()
+                    time.sleep(0.05)
+                print()
+                ChatConsole().print(f"[{_accent_hex()}]{'─' * 40}[/]")
+                _cprint(f"  ✅ Gemini Flash #{task_num} result")
+                _cprint(f"  Query: \"{prompt[:60]}{'...' if len(prompt) > 60 else ''}\"")
+                ChatConsole().print(f"[{_accent_hex()}]{'─' * 40}[/]")
+                if response:
+                    _chat_console = ChatConsole()
+                    _chat_console.print(Panel(
+                        _render_final_assistant_content(response, mode=self.final_response_markdown),
+                        title=f"[bold #4285F4]⚡ Gemini 2.0 Flash (search #{task_num})[/]",
+                        title_align="left",
+                        border_style="#4285F4",
+                        style="#E8EAED",
+                        box=rich_box.HORIZONTALS,
+                        padding=(1, 4),
+                        width=self._scrollback_box_width(),
+                    ))
+                else:
+                    _cprint("  (No response generated)")
+
+                if self.bell_on_complete:
+                    sys.stdout.write("\a")
+                    sys.stdout.flush()
+
+            except Exception as e:
+                if self._app:
+                    self._app.invalidate()
+                    time.sleep(0.05)
+                print()
+                _cprint(f"  ❌ Gemini Flash #{task_num} failed: {e}")
+            finally:
+                try:
+                    set_sudo_password_callback(None)
+                    set_approval_callback(None)
+                    set_secret_capture_callback(None)
+                except Exception:
+                    pass
+                self._background_tasks.pop(task_id, None)
+                if not self._agent_running:
+                    self._spinner_text = ""
+                if self._app:
+                    self._invalidate(min_interval=0)
+
+        thread = threading.Thread(target=run_gflash, daemon=True, name=f"gflash-task-{task_id}")
         self._background_tasks[task_id] = thread
         thread.start()
 
