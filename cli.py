@@ -5005,6 +5005,9 @@ class HermesCLI:
             ),
         }
 
+        code_offload_resolver = getattr(self, "_resolve_code_offload_route", None)
+        route["code_offload"] = code_offload_resolver(user_message) if callable(code_offload_resolver) else None
+
         service_tier = getattr(self, "service_tier", None)
         if not service_tier:
             route["request_overrides"] = None
@@ -5016,6 +5019,266 @@ class HermesCLI:
             overrides = None
         route["request_overrides"] = overrides
         return route
+
+    @staticmethod
+    def _is_openai_backed_orchestrator(provider: Optional[str], base_url: Optional[str]) -> bool:
+        """Return True when the active orchestrator is an OpenAI-backed account.
+
+        The routing policy should spend Hermes budget more conservatively when
+        we're on expensive hosted OpenAI capacity, and be much less aggressive
+        when the orchestrator is the cheap OWL/OpenRouter path.
+        """
+        provider_norm = (provider or "").strip().lower()
+        base_url_norm = (base_url or "").strip().lower()
+        if provider_norm in {"openai", "openai-api", "openai-codex", "codex"}:
+            return True
+        if "api.openai.com" in base_url_norm:
+            return True
+        if "chatgpt.com/backend-api/codex" in base_url_norm:
+            return True
+        return False
+
+    @staticmethod
+    def _looks_like_code_task(user_message: str) -> bool:
+        """Return True when the turn looks like coding work.
+
+        The heuristic is intentionally conservative: we only route away from
+        Hermes when there is a strong signal that the request is code-centric.
+        """
+        if not isinstance(user_message, str):
+            return False
+        text = user_message.strip()
+        if not text:
+            return False
+
+        lower = text.lower()
+        score = 0
+
+        if re.search(r"\b(fix|debug|implement|refactor|write|add|update|modify|patch|port|optimize|rewrite|build|test|review)\b", lower):
+            score += 2
+        if re.search(r"\b(bug|error|exception|traceback|stack trace|failing test|test failure|regression|compile|lint|type error)\b", lower):
+            score += 2
+        if re.search(r"\b(def|class|import|from|function|const|let|var|async|await|return|package|module)\b", lower):
+            score += 1
+        if re.search(r"\.(py|ts|tsx|js|jsx|rs|go|java|cpp|cc|c|h|hpp|rb|php|sh|yaml|yml|json|toml|md)\b", lower):
+            score += 2
+        if re.search(r"\b(src|test|tests|spec|app|cli|api|server|client|repo|repository|module|package|file|folder|directory)\b", lower):
+            score += 1
+        if "```" in text or re.search(r"`[^`]+`", text):
+            score += 1
+        if re.search(r"(/|\\)(?:[\w.-]+/)+[\w.-]+", text):
+            score += 2
+
+        return score >= 3
+
+    def _resolve_code_offload_route(self, user_message: str) -> dict | None:
+        """Return a Claude Code worker plan for code-heavy turns.
+
+        Only active when the orchestrator is OpenAI-backed. OWL/OpenRouter
+        turns stay on Hermes because the orchestrator is already the cheap
+        path.
+        """
+        if not self._is_openai_backed_orchestrator(self.provider, self.base_url):
+            return None
+        if not self._looks_like_code_task(user_message):
+            return None
+
+        model, effort, max_turns = self._pick_claude_code_profile(user_message)
+        return {
+            "worker": "claude-code",
+            "model": model,
+            "effort": effort,
+            "max_turns": max_turns,
+            "visible": True,
+        }
+
+    @staticmethod
+    def _pick_claude_code_profile(user_message: str) -> tuple[str, str, int]:
+        """Pick the cheapest Claude Code profile likely to succeed."""
+        lower = (user_message or "").lower()
+        score = 0
+
+        easy_markers = (
+            "typo",
+            "rename",
+            "format",
+            "lint",
+            "one file",
+            "single file",
+            "small",
+            "simple",
+            "mechanical",
+            "straightforward",
+        )
+        hard_markers = (
+            "refactor",
+            "architecture",
+            "debug",
+            "bug",
+            "failing test",
+            "test failure",
+            "race",
+            "concurrency",
+            "deadlock",
+            "auth",
+            "migration",
+            "performance",
+            "regression",
+            "multi-file",
+            "cross-file",
+            "monorepo",
+            "stateful",
+            "tricky",
+            "deep",
+        )
+
+        for marker in easy_markers:
+            if marker in lower:
+                score -= 1
+        for marker in hard_markers:
+            if marker in lower:
+                score += 2
+
+        if re.search(r"\b(many files|multiple files|across the repo|repo-wide|whole codebase|large refactor)\b", lower):
+            score += 2
+        if re.search(r"\b(write|add|update|fix)\s+(?:a\s+)?(?:test|tests|spec)\b", lower):
+            score -= 1
+
+        if score <= 0:
+            return ("haiku", "low", 5)
+        if score <= 3:
+            return ("sonnet", "medium", 8)
+        return ("opus", "high", 12)
+
+    def _run_claude_code_worker(self, prompt: str, *, model: str, effort: str, max_turns: int) -> Optional[str]:
+        """Run a visible Claude Code print-mode task and stream its output.
+
+        Returns the final synthesized text when available. If Claude Code is
+        unavailable or exits unsuccessfully, returns ``None`` so the caller can
+        fall back to the normal Hermes agent path.
+        """
+        claude_bin = shutil.which("claude")
+        if not claude_bin:
+            _cprint("  ⚠ Claude Code CLI not found; falling back to Hermes.")
+            return None
+
+        workdir = os.getenv("TERMINAL_CWD", os.getcwd())
+        session_tag = datetime.now().strftime("%H%M%S")
+        task_tag = uuid.uuid4().hex[:6]
+        _cprint(
+            f"  ↳ routing code task to Claude Code ({model}, effort={effort}, max_turns={max_turns})"
+        )
+        _cprint(f"  session: claude-code-{session_tag}-{task_tag}")
+
+        claude_prompt = textwrap.dedent(
+            f"""
+            You are working in the current repository at {workdir!r}.
+            Make the requested code change directly, run the minimum relevant
+            tests or validation steps, and return a concise summary of what you
+            changed plus any test results.
+
+            User request:
+            {prompt.strip()}
+            """
+        ).strip()
+
+        cmd = [
+            claude_bin,
+            "-p",
+            claude_prompt,
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--include-partial-messages",
+            "--allowedTools",
+            "Read,Edit,Bash",
+            "--model",
+            model,
+            "--effort",
+            effort,
+            "--max-turns",
+            str(max_turns),
+        ]
+
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                cwd=workdir,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+        except Exception as exc:
+            _cprint(f"  ⚠ failed to start Claude Code: {exc}; falling back to Hermes.")
+            return None
+
+        final_result = None
+        streamed_any = False
+        streamed_text_parts: list[str] = []
+        rc = -1
+        try:
+            assert proc.stdout is not None
+            for raw_line in iter(proc.stdout.readline, ""):
+                if not raw_line and proc.poll() is not None:
+                    break
+                line = raw_line.rstrip("\n")
+                if not line:
+                    continue
+                try:
+                    evt = json.loads(line)
+                except Exception:
+                    # Raw log line or auth/banner output — show it verbatim.
+                    streamed_any = True
+                    print(line)
+                    continue
+
+                event_type = evt.get("type")
+                if event_type == "stream_event":
+                    event = evt.get("event") or {}
+                    delta = event.get("delta") or {}
+                    if delta.get("type") == "text_delta":
+                        text = delta.get("text") or ""
+                        if text:
+                            streamed_any = True
+                            streamed_text_parts.append(text)
+                            sys.stdout.write(text)
+                            sys.stdout.flush()
+                    continue
+
+                if event_type == "result":
+                    final_result = evt.get("result") or final_result
+                    if not final_result:
+                        structured = evt.get("structured_output")
+                        if isinstance(structured, str) and structured.strip():
+                            final_result = structured
+                    continue
+
+                if event_type in {"error", "system"}:
+                    # Keep non-stream events visible for troubleshooting.
+                    msg = evt.get("message") or evt.get("error") or evt.get("result")
+                    if isinstance(msg, str) and msg.strip():
+                        streamed_any = True
+                        print(msg)
+
+            rc = proc.wait()
+        finally:
+            try:
+                if proc.stdout:
+                    proc.stdout.close()
+            except Exception:
+                pass
+
+        if rc != 0:
+            if not streamed_any:
+                _cprint(f"  ⚠ Claude Code exited with status {rc}; falling back to Hermes.")
+            else:
+                _cprint(f"\n  ⚠ Claude Code exited with status {rc}.")
+            return None
+
+        if isinstance(final_result, str) and final_result.strip():
+            return final_result.strip()
+        return "".join(streamed_text_parts).strip()
 
     def _install_tool_callbacks(self) -> None:
         """Install tool callbacks that need the live prompt UI."""
@@ -9399,53 +9662,64 @@ class HermesCLI:
             except Exception:
                 pass
             try:
-                bg_agent = AIAgent(
-                    model=turn_route["model"],
-                    api_key=turn_route["runtime"].get("api_key"),
-                    base_url=turn_route["runtime"].get("base_url"),
-                    provider=turn_route["runtime"].get("provider"),
-                    api_mode=turn_route["runtime"].get("api_mode"),
-                    acp_command=turn_route["runtime"].get("command"),
-                    acp_args=turn_route["runtime"].get("args"),
-                    max_iterations=self.max_turns,
-                    enabled_toolsets=self.enabled_toolsets,
-                    quiet_mode=True,
-                    verbose_logging=False,
-                    session_id=task_id,
-                    platform="cli",
-                    session_db=self._session_db,
-                    reasoning_config=self.reasoning_config,
-                    service_tier=self.service_tier,
-                    request_overrides=turn_route.get("request_overrides"),
-                    providers_allowed=self._providers_only,
-                    providers_ignored=self._providers_ignore,
-                    providers_order=self._providers_order,
-                    provider_sort=self._provider_sort,
-                    provider_require_parameters=self._provider_require_params,
-                    provider_data_collection=self._provider_data_collection,
-                    openrouter_min_coding_score=self._openrouter_min_coding_score,
-                    fallback_model=self._fallback_model,
-                )
-                # Silence raw spinner; route thinking through TUI widget when no foreground agent is active.
-                bg_agent._print_fn = lambda *_a, **_kw: None
+                response = None
+                code_route = turn_route.get("code_offload") if isinstance(turn_route, dict) else None
+                if code_route:
+                    response = self._run_claude_code_worker(
+                        prompt,
+                        model=code_route["model"],
+                        effort=code_route["effort"],
+                        max_turns=code_route["max_turns"],
+                    )
 
-                def _bg_thinking(text: str) -> None:
-                    # Concurrent bg tasks may race on _spinner_text; acceptable for best-effort UI.
-                    if not self._agent_running:
-                        self._spinner_text = text
-                        if self._app:
-                            self._app.invalidate()
+                if response is None:
+                    bg_agent = AIAgent(
+                        model=turn_route["model"],
+                        api_key=turn_route["runtime"].get("api_key"),
+                        base_url=turn_route["runtime"].get("base_url"),
+                        provider=turn_route["runtime"].get("provider"),
+                        api_mode=turn_route["runtime"].get("api_mode"),
+                        acp_command=turn_route["runtime"].get("command"),
+                        acp_args=turn_route["runtime"].get("args"),
+                        max_iterations=self.max_turns,
+                        enabled_toolsets=self.enabled_toolsets,
+                        quiet_mode=True,
+                        verbose_logging=False,
+                        session_id=task_id,
+                        platform="cli",
+                        session_db=self._session_db,
+                        reasoning_config=self.reasoning_config,
+                        service_tier=self.service_tier,
+                        request_overrides=turn_route.get("request_overrides"),
+                        providers_allowed=self._providers_only,
+                        providers_ignored=self._providers_ignore,
+                        providers_order=self._providers_order,
+                        provider_sort=self._provider_sort,
+                        provider_require_parameters=self._provider_require_params,
+                        provider_data_collection=self._provider_data_collection,
+                        openrouter_min_coding_score=self._openrouter_min_coding_score,
+                        fallback_model=self._fallback_model,
+                    )
+                    # Silence raw spinner; route thinking through TUI widget when no foreground agent is active.
+                    bg_agent._print_fn = lambda *_a, **_kw: None
 
-                bg_agent.thinking_callback = _bg_thinking
+                    def _bg_thinking(text: str) -> None:
+                        # Concurrent bg tasks may race on _spinner_text; acceptable for best-effort UI.
+                        if not self._agent_running:
+                            self._spinner_text = text
+                            if self._app:
+                                self._app.invalidate()
 
-                result = bg_agent.run_conversation(
-                    user_message=prompt,
-                    task_id=task_id,
-                )
+                    bg_agent.thinking_callback = _bg_thinking
 
-                response = result.get("final_response", "") if result else ""
-                if not response and result and result.get("error"):
-                    response = f"Error: {result['error']}"
+                    result = bg_agent.run_conversation(
+                        user_message=prompt,
+                        task_id=task_id,
+                    )
+
+                    response = result.get("final_response", "") if result else ""
+                    if not response and result and result.get("error"):
+                        response = f"Error: {result['error']}"
 
                 # Display result in the CLI (thread-safe via patch_stdout).
                 # Force a TUI refresh first so spinner/status bar don't overlap
@@ -12548,11 +12822,23 @@ class HermesCLI:
         # leave it False, which is correct — those aren't user interrupts.
         self._last_turn_interrupted = False
 
+        turn_route = self._resolve_turn_agent_config(message)
+        code_route = turn_route.get("code_offload") if isinstance(turn_route, dict) else None
+        if code_route and isinstance(message, str):
+            self._set_early_turn_title(_early_title_source)
+            code_result = self._run_claude_code_worker(
+                message,
+                model=code_route["model"],
+                effort=code_route["effort"],
+                max_turns=code_route["max_turns"],
+            )
+            if code_result is not None:
+                return code_result
+
         # Refresh provider credentials if needed (handles key rotation transparently)
         if not self._ensure_runtime_credentials():
             return None
 
-        turn_route = self._resolve_turn_agent_config(message)
         if turn_route["signature"] != self._active_agent_route_signature:
             self.agent = None
 
