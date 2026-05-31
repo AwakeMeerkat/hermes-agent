@@ -27,9 +27,9 @@ _WHITESPACE_RE = re.compile(r"\s+")
 class TerminalTitleConfig:
     enabled: bool = True
     mode: str = "auto"  # auto | konsole | tmux | osc | off
-    prefix: str = "Hermes: "
+    prefix: str = ""
     fallback_title: str = "Hermes"
-    max_length: int = 50
+    max_length: int = 32
     update_on_start: bool = True
 
 
@@ -58,9 +58,9 @@ def load_terminal_title_config(config: Mapping | None) -> TerminalTitleConfig:
         return str(value) if value is not None else default
 
     try:
-        max_length = int(raw.get("max_length", 50))
+        max_length = int(raw.get("max_length", 32))
     except (TypeError, ValueError):
-        max_length = 50
+        max_length = 32
     max_length = max(10, min(max_length, 120))
 
     mode = _str("mode", "auto").strip().lower() or "auto"
@@ -70,7 +70,7 @@ def load_terminal_title_config(config: Mapping | None) -> TerminalTitleConfig:
     return TerminalTitleConfig(
         enabled=_bool("enabled", True),
         mode=mode,
-        prefix=_str("prefix", "Hermes: "),
+        prefix=_str("prefix", ""),
         fallback_title=_str("fallback_title", "Hermes") or "Hermes",
         max_length=max_length,
         update_on_start=_bool("update_on_start", True),

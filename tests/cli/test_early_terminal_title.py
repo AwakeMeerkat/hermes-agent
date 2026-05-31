@@ -23,7 +23,7 @@ def test_early_turn_title_uses_short_summary_when_session_is_untitled():
 
     HermesCLI._set_early_turn_title(cli, "Build a GPU utilization percentage applet and add it to both taskbars")
 
-    cli._set_terminal_context_title.assert_called_once_with("GPU utilization applet")
+    cli._set_terminal_context_title.assert_called_once_with("GPU utilization")
 
 
 def test_early_turn_title_gets_even_shorter_for_caps_heavy_prompts():

@@ -463,9 +463,9 @@ def load_cli_config() -> Dict[str, Any]:
             "terminal_title": {
                 "enabled": True,
                 "mode": "auto",
-                "prefix": "Hermes: ",
+                "prefix": "",
                 "fallback_title": "Hermes",
-                "max_length": 50,
+                "max_length": 32,
                 "update_on_start": True,
             },
         },
@@ -5128,8 +5128,8 @@ class HermesCLI:
 
         letters = [ch for ch in text if ch.isalpha()]
         upper_ratio = (sum(1 for ch in letters if ch.isupper()) / len(letters)) if letters else 0.0
-        char_cap = 16 if upper_ratio >= 0.35 else 22
-        word_cap = 3 if upper_ratio >= 0.35 else 4
+        char_cap = 16 if upper_ratio >= 0.35 else 18
+        word_cap = 2 if upper_ratio >= 0.35 else 3
 
         compact_words: list[str] = []
         for word in words[:word_cap]:
@@ -5142,11 +5142,6 @@ class HermesCLI:
             compact = words[0][:char_cap]
         else:
             compact = " ".join(compact_words)
-            if len(words) >= 3:
-                head_tail = [words[0], words[1], words[min(len(words) - 1, word_cap - 1)]] if len(words) > 2 else words[:]
-                candidate = " ".join(head_tail)
-                if len(candidate) <= char_cap and len(candidate) > len(compact):
-                    compact = candidate
 
         compact = compact.strip("-–—:;,. ")
         if len(compact) > char_cap:

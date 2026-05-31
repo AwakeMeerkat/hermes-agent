@@ -37,6 +37,13 @@ def test_load_terminal_title_config_from_display_section():
     assert cfg.update_on_start is False
 
 
+def test_load_terminal_title_config_defaults_do_not_prefix_with_hermes():
+    cfg = load_terminal_title_config({})
+
+    assert cfg.prefix == ""
+    assert cfg.max_length == 32
+
+
 def test_sanitize_title_removes_control_chars_and_truncates():
     assert sanitize_title("  build\nHermes\tfeature  ", 20) == "build Hermes feature"
     assert sanitize_title("a" * 12, 10) == "aaaaaaaaa…"
@@ -45,20 +52,20 @@ def test_sanitize_title_removes_control_chars_and_truncates():
 def test_osc_backend_writes_title_escape():
     out = TtyStringIO()
     mgr = TerminalTitleManager(
-        TerminalTitleConfig(enabled=True, mode="osc", prefix="Hermes: ", max_length=50),
+        TerminalTitleConfig(enabled=True, mode="osc", max_length=50),
         env={},
         stdout=out,
         now=lambda: 100.0,
     )
 
     assert mgr.set_context_title("terminal titles") is True
-    assert out.getvalue() == "\033]0;Hermes: terminal titles\007"
+    assert out.getvalue() == "\033]0;terminal titles\007"
 
 
 def test_immediate_title_change_after_startup_is_not_rate_limited():
     out = TtyStringIO()
     mgr = TerminalTitleManager(
-        TerminalTitleConfig(enabled=True, mode="osc", prefix="Hermes: ", max_length=50),
+        TerminalTitleConfig(enabled=True, mode="osc", max_length=50),
         env={},
         stdout=out,
         now=lambda: 100.0,
@@ -66,7 +73,7 @@ def test_immediate_title_change_after_startup_is_not_rate_limited():
 
     assert mgr.set_context_title(None) is True
     assert mgr.set_context_title("new project") is True
-    assert out.getvalue() == "\033]0;Hermes\007\033]0;Hermes: new project\007"
+    assert out.getvalue() == "\033]0;Hermes\007\033]0;new project\007"
 
 
 def test_disabled_manager_is_noop():

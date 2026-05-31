@@ -1397,9 +1397,9 @@ DEFAULT_CONFIG = {
         "terminal_title": {
             "enabled": True,
             "mode": "auto",              # auto | konsole | tmux | osc | off
-            "prefix": "Hermes: ",
+            "prefix": "",
             "fallback_title": "Hermes",
-            "max_length": 50,
+            "max_length": 32,
             "update_on_start": True,
         },
         # UI language for static user-facing messages (approval prompts, a
