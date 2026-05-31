@@ -5441,13 +5441,22 @@ class HermesCLI:
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": text[:500]},
             ]
+            main_runtime = None
+            if getattr(self, "model", None):
+                main_runtime = {
+                    "model": self.model,
+                    "provider": getattr(self, "provider", None),
+                    "base_url": getattr(self, "base_url", None),
+                    "api_key": getattr(self, "api_key", None),
+                    "api_mode": getattr(self, "api_mode", None),
+                }
             response = call_llm(
                 task="early_title",
                 messages=messages,
                 max_tokens=20,
                 temperature=0.2,
                 timeout=2.5,
-                main_runtime=None,
+                main_runtime=main_runtime,
             )
             title = (response.choices[0].message.content or "").strip()
             # Clean up the LLM output.
