@@ -9521,8 +9521,8 @@ class HermesCLI:
     def _build_gflash_research_packet(
         self,
         query: str,
-        search_limit: int = 5,
-        extract_limit: int = 3,
+        search_limit: int = 8,
+        extract_limit: int = 5,
     ) -> str:
         """Prefetch search results and page extracts for /gflash.
 
@@ -9613,8 +9613,8 @@ class HermesCLI:
                         if error:
                             lines.append(f"   Error: {error}")
                         elif content:
-                            if len(content) > 3500:
-                                content = content[:3500].rstrip() + "\n[truncated]"
+                            if len(content) > 6000:
+                                content = content[:6000].rstrip() + "\n[truncated]"
                             lines.append(textwrap.indent(content, "   "))
                         lines.append("")
 
@@ -9694,7 +9694,10 @@ class HermesCLI:
                     search_prompt = (
                         "Use the pre-fetched web research packet below to answer the user's query. "
                         "Do not claim additional browsing beyond this packet. "
-                        "Synthesize the search results and page extracts, and cite URLs where possible.\n\n"
+                        "Give a thorough, high-signal answer rather than a terse summary. "
+                        "Prefer detail, context, and concrete examples when supported by the packet. "
+                        "If the packet supports it, include sections for summary, key details, caveats, and takeaways. "
+                        "Cite URLs where possible and clearly separate facts from inference.\n\n"
                         f"User query: {prompt}\n\n"
                         f"{research_packet}"
                     )
