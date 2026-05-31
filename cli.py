@@ -9844,18 +9844,71 @@ class HermesCLI:
         self._background_tasks[task_id] = thread
         thread.start()
 
-    def _build_gflash_research_packet(
+    # ── Slash-worker system (config-driven commands backed by model APIs) ──
+
+    _slash_workers_cache: dict | None = None
+
+    @classmethod
+    def _load_slash_workers(cls) -> dict:
+        """Load and cache the slash-worker YAML config."""
+        if cls._slash_workers_cache is not None:
+            return cls._slash_workers_cache
+        cfg_path = os.path.join(os.path.expanduser("~"), ".hermes", "slash_workers.yaml")
+        if not os.path.isfile(cfg_path):
+            cls._slash_workers_cache = {}
+            return cls._slash_workers_cache
+        with open(cfg_path) as f:
+            raw = yaml.safe_load(f) or {}
+        defaults = raw.get("defaults", {})
+        workers = {}
+        for name, w in raw.get("workers", {}).items():
+            if not w.get("enabled", False):
+                continue
+            merged = dict(defaults)
+            merged.update(w)
+            # Ensure ephemeral identity flag works
+            merged["_identity_text"] = (merged.get("identity") or "").strip()
+            workers[name] = merged
+        cls._slash_workers_cache = {"defaults": defaults, "workers": workers}
+        return cls._slash_workers_cache
+
+    @classmethod
+    def invalidate_slash_workers_cache(cls):
+        """Force reload of the YAML config on next access."""
+        cls._slash_workers_cache = None
+
+    def _resolve_slash_worker(self, name: str):
+        """Return the merged worker config for *name*, or None."""
+        cfg = self._load_slash_workers()
+        workers = cfg.get("workers", {})
+        # Try canonical name first, then aliases
+        if name in workers:
+            return workers[name]
+        for wname, w in workers.items():
+            if name in w.get("aliases", ()):
+                return w
+        return None
+
+    def list_slash_worker_names(self) -> list[str]:
+        """Return all enabled worker canonical names."""
+        cfg = self._load_slash_workers()
+        return list(cfg.get("workers", {}).keys())
+
+    def _build_worker_research_packet(
         self,
         query: str,
-        search_limit: int = 8,
-        extract_limit: int = 5,
+        worker: dict,
     ) -> str:
-        """Prefetch search results and page extracts for /gflash.
+        """Prefetch search results and page extracts for research workers.
 
-        This emulates the Gemini website's "search then open the top pages"
-        flow by doing the retrieval step in Hermes before the Gemini model
-        synthesizes the answer.
+        Falls back to "" (empty string) if research is disabled or fails.
         """
+        research_cfg = worker.get("research") or {}
+        if not research_cfg.get("enabled", False):
+            return ""
+        search_limit = int(research_cfg.get("search_limit", 8))
+        extract_limit = int(research_cfg.get("extract_limit", 5))
+
         try:
             search_raw = web_search_tool(query, limit=search_limit)
             search_data = json.loads(search_raw) if isinstance(search_raw, str) else search_raw
@@ -9949,117 +10002,109 @@ class HermesCLI:
 
         return "\n".join(line.rstrip() for line in lines).strip()
 
-    def _handle_gflash_command(self, cmd: str):
-        """Handle /gflash <query> — Gemini 2.5 Flash web research.
+    def _handle_worker_command(self, worker_name: str, cmd: str):
+        """Generic dispatcher for config-driven slash-worker commands.
 
-        First performs Hermes-side web search + page extraction to mimic the
-        Gemini website's "search and open the top pages" flow, then sends the
-        prefetched research packet to Gemini 2.5 Flash for synthesis. If web
-        prefetch fails, falls back to the older tool-driven flow.
-
-        Usage: /gflash <search query>
-               /gf <query>       (alias)
-               /gemini <query>   (alias)
+        Usage: /<worker_name> <query>
+        Examples: /gflash <query>  /gf <query>  /gemini <query>
         """
+        worker = self._resolve_slash_worker(worker_name)
+        if worker is None:
+            _cprint(f"  Unknown slash command: /{worker_name}")
+            _cprint("  Run /plugins to see available plugins, or check your slash_workers.yaml config.")
+            return
+
         parts = cmd.strip().split(maxsplit=1)
         if len(parts) < 2 or not parts[1].strip():
-            _cprint("  Usage: /gflash <query>")
-            _cprint("  Example: /gflash latest news on AI agents")
-            _cprint("  Searches the web, opens top pages, and returns a synthesis.")
+            _cprint(f"  Usage: /{worker_name} <query>")
+            _cprint(f"  {worker.get('description', 'Run a research query')}")
             return
 
         prompt = parts[1].strip()
 
-        google_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
-        if not google_key:
-            _cprint("  (>_<) GOOGLE_API_KEY / GEMINI_API_KEY not set in environment.")
-            _cprint("  Set it in ~/.hermes/.env or export it before using /gflash.")
+        # Resolve API key
+        api_key_env = worker.get("api_key_env", "GOOGLE_API_KEY")
+        fallback_env = worker.get("fallback_api_key_env", "GEMINI_API_KEY")
+        api_key = os.environ.get(api_key_env) or os.environ.get(fallback_env)
+        if not api_key:
+            _cprint(f"  (>_<) {api_key_env} / {fallback_env} not set in environment.")
+            _cprint("  Set it in ~/.hermes/.env or export it before using this command.")
             return
 
         self._background_task_counter += 1
         task_num = self._background_task_counter
-        task_id = f"gflash_{datetime.now().strftime('%H%M%S')}_{uuid.uuid4().hex[:6]}"
+        task_id = f"{worker_name}_{datetime.now().strftime('%H%M%S')}_{uuid.uuid4().hex[:6]}"
 
-        _cprint(f"  🔍 Gemini 2.5 Flash research #{task_num}: \"{prompt[:60]}{'...' if len(prompt) > 60 else ''}\"")
+        model_name = worker.get("model", "gemini-2.5-flash")
+        provider_name = worker.get("provider", "google")
+        base_url = worker.get("base_url", "https://generativelanguage.googleapis.com/v1beta")
+        identity_text = worker.get("_identity_text", "")
+
+        _cprint(f"  🔍 {model_name} research #{task_num}: \"{prompt[:60]}{'...' if len(prompt) > 60 else ''}\"")
+        _cprint(f"  Provider: {provider_name}")
+        if identity_text:
+            _cprint("  Using custom identity (skip_default_identity)")
         _cprint("  Running in background — results will appear when done.\n")
 
-        def run_gflash():
+        def run_worker():
             set_sudo_password_callback(self._sudo_password_callback)
             set_approval_callback(self._approval_callback)
             try:
                 set_secret_capture_callback(self._secret_capture_callback)
             except Exception:
                 pass
+
             try:
-                research_packet = self._build_gflash_research_packet(prompt)
-                if research_packet:
-                    gflash_agent = AIAgent(
-                        model="gemini-2.5-flash",
-                        api_key=google_key,
-                        base_url="https://generativelanguage.googleapis.com/v1beta",
-                        provider="google",
-                        api_mode="chat_completions",
-                        max_iterations=2,
-                        enabled_toolsets=[],
-                        quiet_mode=True,
-                        verbose_logging=False,
-                        session_id=task_id,
-                        platform="cli",
-                        skip_memory=True,
-                        skip_context_files=True,
-                    )
-                    gflash_agent._print_fn = lambda *_a, **_kw: None  # type: ignore[attr-defined]
+                # Step 1: pre-fetch research packet if configured
+                research_packet = self._build_worker_research_packet(prompt, worker) if identity_text else ""
 
-                    def _gflash_thinking(text: str) -> None:
-                        if not self._agent_running:
-                            self._spinner_text = text
-                            if self._app:
-                                self._app.invalidate()
+                # Step 2: build the agent
+                has_identity = bool(identity_text)
+                toolsets = worker.get("enabled_toolsets", [])
 
-                    gflash_agent.thinking_callback = _gflash_thinking  # type: ignore[attr-defined]
-                    search_prompt = (
-                        "Use the pre-fetched web research packet below to answer the user's query. "
-                        "Do not claim additional browsing beyond this packet. "
-                        "Give a thorough, high-signal answer rather than a terse summary. "
-                        "Prefer detail, context, and concrete examples when supported by the packet. "
-                        "If the packet supports it, include sections for summary, key details, caveats, and takeaways. "
-                        "Cite URLs where possible and clearly separate facts from inference.\n\n"
-                        f"User query: {prompt}\n\n"
-                        f"{research_packet}"
-                    )
+                # If we have a research packet and identity, run a clean agent
+                # with the packet inline (no live tools needed).
+                # Otherwise run a tool-driven agent.
+                if research_packet and has_identity:
+                    agent_toolsets: List[str] = []
                 else:
-                    gflash_agent = AIAgent(
-                        model="gemini-2.5-flash",
-                        api_key=google_key,
-                        base_url="https://generativelanguage.googleapis.com/v1beta",
-                        provider="google",
-                        api_mode="chat_completions",
-                        max_iterations=15,
-                        enabled_toolsets=["web"],
-                        quiet_mode=True,
-                        verbose_logging=False,
-                        session_id=task_id,
-                        platform="cli",
-                        skip_memory=True,
-                        skip_context_files=True,
-                    )
-                    gflash_agent._print_fn = lambda *_a, **_kw: None  # type: ignore[attr-defined]
+                    agent_toolsets = toolsets
 
-                    def _gflash_thinking(text: str) -> None:
-                        if not self._agent_running:
-                            self._spinner_text = text
-                            if self._app:
-                                self._app.invalidate()
+                worker_agent = AIAgent(
+                    model=model_name,
+                    api_key=api_key,
+                    base_url=base_url,
+                    provider=provider_name,
+                    api_mode=worker.get("api_mode", "chat_completions"),
+                    max_iterations=int(worker.get("max_iterations", 2 if research_packet else 15)),
+                    enabled_toolsets=agent_toolsets,
+                    quiet_mode=worker.get("quiet_mode", True),
+                    verbose_logging=False,
+                    session_id=task_id,
+                    platform="cli",
+                    skip_memory=True,
+                    skip_context_files=True,
+                    skip_default_identity=has_identity,
+                    ephemeral_system_prompt=identity_text if has_identity else None,
+                )
+                worker_agent._print_fn = lambda *_a, **_kw: None  # type: ignore[attr-defined]
 
-                    gflash_agent.thinking_callback = _gflash_thinking  # type: ignore[attr-defined]
-                    search_prompt = (
-                        f"Web search and summarize: {prompt}\n\n"
-                        "Use web search tools to find current, relevant information. "
-                        "Provide a concise, well-organized summary with key facts and sources. "
-                        "Be factual and cite URLs where possible."
-                    )
+                def _worker_thinking(text: str) -> None:
+                    if not self._agent_running:
+                        self._spinner_text = text
+                        if self._app:
+                            self._app.invalidate()
 
-                result = gflash_agent.run_conversation(
+                worker_agent.thinking_callback = _worker_thinking  # type: ignore[attr-defined]
+
+                # Step 3: build the prompt
+                synthesis_tpl = worker.get("synthesis_prompt", f"Answer this query: {{query}}")
+                if research_packet:
+                    search_prompt = synthesis_tpl.format(query=prompt, research_packet=research_packet)
+                else:
+                    search_prompt = synthesis_tpl.format(query=prompt)
+
+                result = worker_agent.run_conversation(
                     user_message=search_prompt,
                     task_id=task_id,
                 )
@@ -10069,39 +10114,32 @@ class HermesCLI:
                     response = f"Error: {result['error']}"
 
                 if response:
-                    # Queue a one-shot note for the NEXT user turn. The CLI's
-                    # agent loop prepends ``_pending_gflash_note`` (if set) to the
-                    # API-call-local message at ~L12167, then clears it — same
-                    # pattern as the model-switch and skills-reload notes.
-                    # Nothing is written to conversation_history here, so this
-                    # avoids wasting an extra Hermes turn while still making the
-                    # research available as context for the user's next prompt.
-                    new_gflash_note = (
-                        "[USER INITIATED /gflash RESEARCH NOTE: Use this as context "
-                        "for the next user turn only, then ignore it.\n\n"
+                    new_note = (
+                        f"[USER INITIATED /{worker_name} RESEARCH NOTE: Use this as context "
+                        f"for the next user turn only, then ignore it.\n\n"
                         f"Query: {prompt}\n\n"
                         f"{response}\n"
-                        "]"
+                        f"]"
                     )
-                    existing_gflash_note = getattr(self, "_pending_gflash_note", None)
-                    if existing_gflash_note:
-                        self._pending_gflash_note = existing_gflash_note + "\n\n" + new_gflash_note
+                    existing_note = getattr(self, "_pending_worker_note", None)
+                    if existing_note:
+                        self._pending_worker_note = existing_note + "\n\n" + new_note
                     else:
-                        self._pending_gflash_note = new_gflash_note
+                        self._pending_worker_note = new_note
 
                 if self._app:
                     self._app.invalidate()
                     time.sleep(0.05)
                 print()
                 ChatConsole().print(f"[{_accent_hex()}]{'─' * 40}[/]")
-                _cprint(f"  ✅ Gemini Flash #{task_num} result")
+                _cprint(f"  ✅ {model_name} #{task_num} result")
                 _cprint(f"  Query: \"{prompt[:60]}{'...' if len(prompt) > 60 else ''}\"")
                 ChatConsole().print(f"[{_accent_hex()}]{'─' * 40}[/]")
                 if response:
                     _chat_console = ChatConsole()
                     _chat_console.print(Panel(
                         _render_final_assistant_content(response, mode=self.final_response_markdown),
-                        title=f"[bold #4285F4]⚡ Gemini 2.5 Flash (research #{task_num})[/]",
+                        title=f"[bold #4285F4]  {model_name} (research #{task_num})[/]",
                         title_align="left",
                         border_style="#4285F4",
                         style="#E8EAED",
@@ -10120,7 +10158,7 @@ class HermesCLI:
                     self._app.invalidate()
                     time.sleep(0.05)
                 print()
-                _cprint(f"  ❌ Gemini Flash #{task_num} failed: {e}")
+                _cprint(f"  ❌ {model_name} #{task_num} failed: {e}")
             finally:
                 try:
                     set_sudo_password_callback(None)
@@ -10134,9 +10172,13 @@ class HermesCLI:
                 if self._app:
                     self._invalidate(min_interval=0)
 
-        thread = threading.Thread(target=run_gflash, daemon=True, name=f"gflash-task-{task_id}")
+        thread = threading.Thread(target=run_worker, daemon=True, name=f"worker-{worker_name}-{task_id}")
         self._background_tasks[task_id] = thread
         thread.start()
+
+    def _handle_gflash_command(self, cmd: str):
+        """Handle /gflash — delegates to the generic worker dispatcher."""
+        self._handle_worker_command("gflash", cmd)
 
     @staticmethod
     def _try_launch_chrome_debug(port: int, system: str) -> bool:
@@ -13145,12 +13187,12 @@ class HermesCLI:
                 if _srn:
                     agent_message = _prepend_note_to_message(agent_message, _srn)
                     self._pending_skills_reload_note = None
-                # Prepend pending /gflash research so the next prompt can use
-                # the Gemini output as context without burning an extra turn.
-                _gfn = getattr(self, '_pending_gflash_note', None)
+                # Prepend pending /gflash (or other slash-worker) research so the
+                # next prompt can use the output as context without burning an extra turn.
+                _gfn = getattr(self, '_pending_worker_note', None)
                 if _gfn:
                     agent_message = _gfn + "\n\n" + agent_message
-                    self._pending_gflash_note = None
+                    self._pending_worker_note = None
                 try:
                     result = self.agent.run_conversation(
                         user_message=agent_message,

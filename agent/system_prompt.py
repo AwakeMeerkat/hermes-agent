@@ -94,9 +94,17 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
             stable_parts.append(_soul_content)
             _soul_loaded = True
 
-    if not _soul_loaded:
+    _effective_identity = ""
+    if getattr(agent, "skip_default_identity", False):
+        # Caller explicitly opted out of the default identity (e.g. slash workers
+        # that provide their own identity via ephemeral_system_prompt).
+        pass
+    elif not _soul_loaded:
         # Fallback to hardcoded identity
-        stable_parts.append(DEFAULT_AGENT_IDENTITY)
+        _effective_identity = DEFAULT_AGENT_IDENTITY
+
+    if _effective_identity:
+        stable_parts.append(_effective_identity)
 
     # Pointer to the hermes-agent skill + docs for user questions about Hermes itself.
     stable_parts.append(HERMES_AGENT_HELP_GUIDANCE)
