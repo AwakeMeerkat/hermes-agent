@@ -106,6 +106,7 @@ TIPS = [
 
     # --- Configuration ---
     "Set display.bell_on_complete: true in config.yaml to hear a bell when long tasks finish.",
+    "Set display.notify_on_interact: true to play a sound whenever the agent needs your input.",
     "Set display.streaming: true to see tokens appear in real time as the model generates.",
     "Set display.show_reasoning: true to watch the model's chain-of-thought reasoning.",
     "Set display.compact: true to reduce whitespace in output for denser information.",

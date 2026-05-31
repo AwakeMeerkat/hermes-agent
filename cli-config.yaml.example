@@ -985,12 +985,24 @@ display:
   background_process_notifications: all
 
 
-  # Play terminal bell when agent finishes a response.
+  # Play notification sound when agent finishes a response.
   # Useful for long-running tasks — your terminal will ding when the agent is done.
-  # Works over SSH. Most terminals can be configured to flash the taskbar or play a sound.
-  #   true:  Ring the terminal bell on each response
+  # Combines ASCII BEL (works over SSH and through tmux) with paplay
+  # (covers Wayland-native terminals like Foot/Kitty/ghostty where
+  # \a is silently dropped).  paplay falls back gracefully if missing.
+  #   true:  Ring the bell on each response
   #   false: Silent (default)
   bell_on_complete: false
+
+  # Play notification sound when the agent needs user input
+  # (clarify questions, dangerous-command approvals, sudo password
+  # prompts, secret captures).  Same two-pronged paplay + ASCII BEL
+  # strategy as bell_on_complete.  Useful when you've alt-tabbed away
+  # from the terminal and want an audible cue when the agent is
+  # waiting on you.
+  #   true:  Ring on every interactive prompt
+  #   false: Silent (default)
+  notify_on_interact: false
 
   # Show model reasoning/thinking before each response.
   # When enabled, a dim box shows the model's thought process above the response.

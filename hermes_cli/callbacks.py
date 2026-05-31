@@ -15,6 +15,23 @@ from hermes_cli.secret_prompt import masked_secret_prompt
 from hermes_constants import display_hermes_home
 
 
+def _maybe_ring_interact_bell(cli) -> None:
+    """Ring the notification bell when ``display.notify_on_interact`` is on.
+
+    Imported lazily to avoid an import-time cycle between
+    ``cli.py`` and ``hermes_cli/callbacks.py``.  The helper is a no-op
+    when the config flag is off or when the CLI hasn't loaded its
+    config yet (defensive ``getattr``).
+    """
+    if not getattr(cli, "notify_on_interact", False):
+        return
+    try:
+        from cli import _ring_bell
+        _ring_bell()
+    except Exception:
+        pass
+
+
 def clarify_callback(cli, question, choices):
     """Prompt for clarifying question through the TUI.
 
@@ -35,6 +52,8 @@ def clarify_callback(cli, question, choices):
     }
     cli._clarify_deadline = _time.monotonic() + timeout
     cli._clarify_freetext = is_open_ended
+
+    _maybe_ring_interact_bell(cli)
 
     if hasattr(cli, "_app") and cli._app:
         cli._app.invalidate()
@@ -74,6 +93,7 @@ def prompt_for_secret(cli, var_name: str, prompt: str, metadata=None) -> dict:
             cli._secret_state = None
         if not hasattr(cli, "_secret_deadline"):
             cli._secret_deadline = 0
+        _maybe_ring_interact_bell(cli)
         try:
             value = masked_secret_prompt(f"{prompt} (hidden, ESC or empty Enter to skip): ")
         except (EOFError, KeyboardInterrupt):
@@ -109,6 +129,7 @@ def prompt_for_secret(cli, var_name: str, prompt: str, metadata=None) -> dict:
         "response_queue": response_queue,
     }
     cli._secret_deadline = _time.monotonic() + timeout
+    _maybe_ring_interact_bell(cli)
     # Avoid storing stale draft input as the secret when Enter is pressed.
     if hasattr(cli, "_clear_secret_input_buffer"):
         try:
@@ -215,6 +236,8 @@ def approval_callback(cli, command: str, description: str) -> str:
             "response_queue": response_queue,
         }
         cli._approval_deadline = _time.monotonic() + timeout
+
+        _maybe_ring_interact_bell(cli)
 
         if hasattr(cli, "_app") and cli._app:
             cli._app.invalidate()
