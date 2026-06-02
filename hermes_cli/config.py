@@ -1276,8 +1276,9 @@ DEFAULT_CONFIG = {
             "timeout": 30,
             "extra_body": {},
             "prompt": (
-                "Generate a short, descriptive title (2-4 words) for a conversation that starts with the "
-                "following exchange. The title should capture the main topic or intent. "
+                "Name the concrete topic the conversation is actually about in 2-4 words. "
+                "Focus on the work, task, problem, or topic — not on the meta-action, tone, or request type. "
+                "Avoid generic labels like 'Clarify request', 'User question', or 'Please acknowledge'. "
                 "Return ONLY the title text, nothing else. No quotes, no punctuation at the end, no prefixes. "
                 "Do NOT include the word 'Hermes' in the title."
             ),
@@ -1414,10 +1415,11 @@ DEFAULT_CONFIG = {
             "max_length": 32,
             "update_on_start": True,
             "early_title_prompt": (
-                "Summarize what the user wants to accomplish in 2-4 words. "
+                "Name the concrete topic the conversation is actually about in 2-4 words. "
+                "Focus on the work, task, problem, or topic — not on the meta-action, tone, or request type. "
+                "Avoid generic labels like 'Clarify request', 'User question', or 'Please acknowledge'. "
                 "Return ONLY the summary text — no quotes, no punctuation at the end, "
-                "no prefixes like 'Title:'. Focus on the action/task, not pleasantries. "
-                "Example: 'Move memories to skills' or 'Debug Python import error'."
+                "no prefixes like 'Title:'. Example: 'Move memories to skills' or 'Debug Python import error'."
             ),
         },
         # UI language for static user-facing messages (approval prompts, a

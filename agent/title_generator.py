@@ -21,8 +21,9 @@ FailureCallback = Callable[[str, BaseException], None]
 TitleCallback = Callable[[str], None]
 
 _TITLE_PROMPT = (
-    "Generate a short, descriptive title (2-4 words) for a conversation that starts with the "
-    "following exchange. The title should capture the main topic or intent. "
+    "Name the concrete topic the conversation is actually about in 2-4 words. "
+    "Focus on the work, task, problem, or topic — not on the meta-action, tone, or request type. "
+    "Avoid generic labels like 'Clarify request', 'User question', or 'Please acknowledge'. "
     "Return ONLY the title text, nothing else. No quotes, no punctuation at the end, no prefixes. "
     "Do NOT include the word 'Hermes' in the title."
 )
@@ -58,7 +59,7 @@ def generate_title(
     assistant_snippet = assistant_response[:500] if assistant_response else ""
 
     messages = [
-        {"role": "system", "content": _TITLE_PROMPT},
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": f"User: {user_snippet}\n\nAssistant: {assistant_snippet}"},
     ]
 
@@ -66,8 +67,8 @@ def generate_title(
         response = call_llm(
             task="title_generation",
             messages=messages,
-            max_tokens=500,
-            temperature=0.3,
+            max_tokens=20,
+            temperature=0.2,
             timeout=timeout,
             main_runtime=main_runtime,
         )

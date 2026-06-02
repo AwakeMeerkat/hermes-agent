@@ -32,10 +32,11 @@ class TerminalTitleConfig:
     max_length: int = 32
     update_on_start: bool = True
     early_title_prompt: str = (
-        "Summarize what the user wants to accomplish in 2-4 words. "
+        "Name the concrete topic the conversation is actually about in 2-4 words. "
+        "Focus on the work, task, problem, or topic — not on the meta-action, tone, or request type. "
+        "Avoid generic labels like 'Clarify request', 'User question', or 'Please acknowledge'. "
         "Return ONLY the summary text — no quotes, no punctuation at the end, "
-        "no prefixes like 'Title:'. Focus on the action/task, not pleasantries. "
-        "Example: 'Move memories to skills' or 'Debug Python import error'."
+        "no prefixes like 'Title:'. Example: 'Move memories to skills' or 'Debug Python import error'."
     )
 
 

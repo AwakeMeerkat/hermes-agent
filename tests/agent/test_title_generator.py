@@ -40,6 +40,25 @@ class TestGenerateTitle:
             title = generate_title("my pod keeps crashing", "Let me look...")
             assert title == "Kubernetes Pod Debugging"
 
+    def test_uses_custom_system_prompt(self):
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "Debugging Title"
+        captured_kwargs = {}
+
+        def mock_call_llm(**kwargs):
+            captured_kwargs.update(kwargs)
+            return mock_response
+
+        with patch("agent.title_generator.call_llm", side_effect=mock_call_llm):
+            generate_title(
+                "my pod keeps crashing",
+                "Let me look...",
+                system_prompt="custom prompt here",
+            )
+
+        assert captured_kwargs["messages"][0]["content"] == "custom prompt here"
+
     def test_truncates_long_titles(self):
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
