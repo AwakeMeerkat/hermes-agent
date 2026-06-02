@@ -63,6 +63,7 @@ class TestCliResumeCommand:
         assert cli_obj.session_id == "sess_001"
         assert "Resumed session sess_001" in printed
         assert "Research" in printed
+        cli_obj._session_db.resolve_resume_session_id.assert_not_called()
 
     def test_handle_resume_by_index_out_of_range(self):
         cli_obj = _make_cli()
@@ -99,6 +100,7 @@ class TestCliResumeCommand:
             assert cli_obj.session_id == "sess_alpha", (
                 f"bracket-stripping failed for {raw!r}: session_id stayed {cli_obj.session_id}"
             )
+            cli_obj._session_db.resolve_resume_session_id.assert_not_called()
 
     def test_handle_resume_does_not_strip_partial_brackets(self):
         """Mismatched or single brackets must pass through unmodified.
