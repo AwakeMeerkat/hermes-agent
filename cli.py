@@ -11149,10 +11149,6 @@ class HermesCLI:
             print("(._.) No active agent -- send a message first.")
             return
 
-        if not self.agent.compression_enabled:
-            print("(._.) Compression is disabled in config.")
-            return
-
         from hermes_cli.partial_compress import (
             parse_partial_compress_args,
             rejoin_compressed_head_and_tail,

@@ -81,6 +81,26 @@ def test_empty_focus_after_command_treated_as_none(capsys):
     assert call_kwargs.kwargs.get("focus_topic") is None
 
 
+def test_manual_compress_still_works_when_auto_compression_is_disabled(capsys):
+    """Manual /compress should still run even if auto-compression is off."""
+    shell = _make_cli()
+    history = _make_history()
+    compressed = [history[0], history[-1]]
+    shell.conversation_history = history
+    shell.agent = MagicMock()
+    shell.agent.compression_enabled = False
+    shell.agent._cached_system_prompt = ""
+    shell.agent._compress_context.return_value = (compressed, "")
+
+    with patch("agent.model_metadata.estimate_messages_tokens_rough", return_value=100):
+        shell._manual_compress("/compress")
+
+    shell.agent._compress_context.assert_called_once()
+    output = capsys.readouterr().out
+    assert "Compression is disabled in config" not in output
+    assert "Compressing" in output
+
+
 def test_focus_topic_printed_in_compression_banner(capsys):
     """The focus topic shows in the compression progress banner."""
     shell = _make_cli()
