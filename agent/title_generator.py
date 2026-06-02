@@ -34,6 +34,7 @@ def generate_title(
     timeout: float = 30.0,
     failure_callback: Optional[FailureCallback] = None,
     main_runtime: dict = None,
+    system_prompt: Optional[str] = None,
 ) -> Optional[str]:
     """Generate a session title from the first exchange.
 
@@ -45,7 +46,13 @@ def generate_title(
     auxiliary call raises — the caller typically wires this to
     ``AIAgent._emit_auxiliary_failure`` so the user sees a warning instead
     of silently accumulating untitled sessions.
+
+    ``system_prompt`` overrides the default title-generation prompt.
+    When None, the prompt is read from ``auxiliary.title_generation.prompt``
+    in the Hermes config, falling back to the built-in default.
     """
+    if system_prompt is None:
+        system_prompt = _TITLE_PROMPT
     # Truncate long messages to keep the request small
     user_snippet = user_message[:500] if user_message else ""
     assistant_snippet = assistant_response[:500] if assistant_response else ""
@@ -103,6 +110,7 @@ def auto_title_session(
     failure_callback: Optional[FailureCallback] = None,
     main_runtime: dict = None,
     title_callback: Optional[TitleCallback] = None,
+    system_prompt: Optional[str] = None,
 ) -> None:
     """Generate and set a session title if one doesn't already exist.
 
@@ -124,7 +132,9 @@ def auto_title_session(
         return
 
     title = generate_title(
-        user_message, assistant_response, failure_callback=failure_callback, main_runtime=main_runtime
+        user_message, assistant_response,
+        failure_callback=failure_callback, main_runtime=main_runtime,
+        system_prompt=system_prompt,
     )
     if not title:
         return
@@ -150,6 +160,7 @@ def maybe_auto_title(
     failure_callback: Optional[FailureCallback] = None,
     main_runtime: dict = None,
     title_callback: Optional[TitleCallback] = None,
+    system_prompt: Optional[str] = None,
 ) -> None:
     """Fire-and-forget title generation after the first exchange.
 
@@ -175,6 +186,7 @@ def maybe_auto_title(
             "failure_callback": failure_callback,
             "main_runtime": main_runtime,
             "title_callback": title_callback,
+            "system_prompt": system_prompt,
         },
         daemon=True,
         name="auto-title",

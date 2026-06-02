@@ -31,6 +31,12 @@ class TerminalTitleConfig:
     fallback_title: str = "Hermes"
     max_length: int = 32
     update_on_start: bool = True
+    early_title_prompt: str = (
+        "Summarize what the user wants to accomplish in 2-4 words. "
+        "Return ONLY the summary text — no quotes, no punctuation at the end, "
+        "no prefixes like 'Title:'. Focus on the action/task, not pleasantries. "
+        "Example: 'Move memories to skills' or 'Debug Python import error'."
+    )
 
 
 def load_terminal_title_config(config: Mapping | None) -> TerminalTitleConfig:
@@ -74,6 +80,7 @@ def load_terminal_title_config(config: Mapping | None) -> TerminalTitleConfig:
         fallback_title=_str("fallback_title", "Hermes") or "Hermes",
         max_length=max_length,
         update_on_start=_bool("update_on_start", True),
+        early_title_prompt=_str("early_title_prompt", TerminalTitleConfig.early_title_prompt),
     )
 
 

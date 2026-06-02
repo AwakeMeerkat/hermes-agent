@@ -5449,14 +5449,22 @@ class HermesCLI:
         try:
             from agent.auxiliary_client import call_llm
 
-            prompt = (
-                "Summarize what the user wants to accomplish in 2-4 words. "
-                "Return ONLY the summary text — no quotes, no punctuation at the end, "
-                "no prefixes like 'Title:'. Focus on the action/task, not pleasantries. "
-                "Example: 'Move memories to skills' or 'Debug Python import error'."
+            early_title_prompt = getattr(
+                getattr(self, "_terminal_title", None),
+                "config",
+                None,
             )
+            if early_title_prompt is not None:
+                early_title_prompt = getattr(early_title_prompt, "early_title_prompt", None)
+            if not early_title_prompt:
+                early_title_prompt = (
+                    "Summarize what the user wants to accomplish in 2-4 words. "
+                    "Return ONLY the summary text — no quotes, no punctuation at the end, "
+                    "no prefixes like 'Title:'. Focus on the action/task, not pleasantries. "
+                    "Example: 'Move memories to skills' or 'Debug Python import error'."
+                )
             messages = [
-                {"role": "system", "content": prompt},
+                {"role": "system", "content": early_title_prompt},
                 {"role": "user", "content": text[:500]},
             ]
             main_runtime = None
@@ -13488,6 +13496,11 @@ class HermesCLI:
                             "api_mode": self.api_mode,
                         },
                         title_callback=self._set_terminal_context_title,
+                        system_prompt=(
+                            CLI_CONFIG.get("auxiliary", {})
+                            .get("title_generation", {})
+                            .get("prompt")
+                        ),
                     )
                 except Exception:
                     pass
