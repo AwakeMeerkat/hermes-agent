@@ -1119,10 +1119,9 @@ def _resolve_session_by_name_or_id(name_or_id: str) -> Optional[str]:
     - If it looks like a session ID (contains underscore + hex), try direct lookup first.
     - Otherwise, treat it as a title and use resolve_session_by_title (auto-latest).
     - Falls back to the other method if the first doesn't match.
-    - If the resolved session is a compression root, follow the chain forward
-      to the latest continuation. Users who remember the old root ID (e.g.
-      from an exit summary printed before the bug fix, or from notes) get
-      resumed at the live tip instead of a stale parent with no messages.
+    - Returns the exact matching row; resume-specific redirection is handled
+      later only when the requested session is the empty head of a compression
+      chain.
     """
     try:
         from hermes_state import SessionDB
@@ -1137,14 +1136,6 @@ def _resolve_session_by_name_or_id(name_or_id: str) -> Optional[str]:
         else:
             # Try as title (with auto-latest for lineage)
             resolved_id = db.resolve_session_by_title(name_or_id)
-
-        if resolved_id:
-            # Project forward through compression chain so resumes land on
-            # the live tip instead of a dead compressed parent.
-            try:
-                resolved_id = db.get_compression_tip(resolved_id) or resolved_id
-            except Exception:
-                pass
 
         db.close()
         return resolved_id

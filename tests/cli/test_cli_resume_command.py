@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock, patch
 
 from cli import HermesCLI
+from hermes_cli.main import _resolve_session_by_name_or_id
 
 
 def _make_cli():
@@ -117,6 +118,23 @@ class TestCliResumeCommand:
 
         printed = " ".join(str(call) for call in mock_cprint.call_args_list)
         assert "<half" in printed
+
+    def test_resolve_session_by_name_or_id_returns_exact_match_without_tip_projection(self):
+        fake_db = MagicMock()
+        fake_db.get_compression_tip.side_effect = AssertionError(
+            "get_compression_tip should not be called for explicit resume resolution"
+        )
+
+        with patch("hermes_state.SessionDB", return_value=fake_db):
+            fake_db.get_session.return_value = {"id": "parent", "title": "My Session"}
+            fake_db.resolve_session_by_title.return_value = None
+            assert _resolve_session_by_name_or_id("parent") == "parent"
+
+            fake_db.get_session.return_value = None
+            fake_db.resolve_session_by_title.return_value = "parent"
+            assert _resolve_session_by_name_or_id("My Session") == "parent"
+
+        fake_db.get_compression_tip.assert_not_called()
 
 
 class TestPendingResumeNumberedSelection:
