@@ -10107,6 +10107,7 @@ class HermesCLI:
                     provider=provider_name,
                     api_mode=worker.get("api_mode", "chat_completions"),
                     max_iterations=int(worker.get("max_iterations", 2 if research_packet else 15)),
+                    max_tokens=worker.get("max_output_tokens", None),
                     enabled_toolsets=agent_toolsets,
                     quiet_mode=worker.get("quiet_mode", True),
                     verbose_logging=False,
