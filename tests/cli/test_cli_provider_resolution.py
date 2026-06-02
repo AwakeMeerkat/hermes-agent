@@ -500,7 +500,7 @@ def test_codex_provider_strips_provider_prefix_from_model(monkeypatch):
     assert shell.model == "gpt-5.3-codex"
 
 
-def test_openai_orchestrator_routes_code_tasks_to_claude(monkeypatch):
+def test_openai_orchestrator_does_not_route_code_tasks_to_claude(monkeypatch):
     cli = _import_cli()
 
     shell = cli.HermesCLI(model="gpt-5.4-mini", compact=True, max_turns=1)
@@ -510,13 +510,10 @@ def test_openai_orchestrator_routes_code_tasks_to_claude(monkeypatch):
 
     route = shell._resolve_turn_agent_config("Please fix cli.py and add a regression test for it")
 
-    assert route["code_offload"] is not None
-    assert route["code_offload"]["worker"] == "claude-code"
-    assert route["code_offload"]["visible"] is True
-    assert route["code_offload"]["model"] in {"haiku", "sonnet", "opus"}
+    assert route["code_offload"] is None
 
 
-def test_openai_orchestrator_routes_implement_style_code_tasks_to_claude(monkeypatch):
+def test_openai_orchestrator_does_not_route_implement_style_code_tasks_to_claude(monkeypatch):
     cli = _import_cli()
 
     shell = cli.HermesCLI(model="gpt-5.4-mini", compact=True, max_turns=1)
@@ -526,9 +523,7 @@ def test_openai_orchestrator_routes_implement_style_code_tasks_to_claude(monkeyp
 
     route = shell._resolve_turn_agent_config("Implement caching for search results")
 
-    assert route["code_offload"] is not None
-    assert route["code_offload"]["worker"] == "claude-code"
-    assert route["code_offload"]["visible"] is True
+    assert route["code_offload"] is None
 
 
 def test_non_openai_orchestrator_does_not_route_code_tasks(monkeypatch):
@@ -543,22 +538,6 @@ def test_non_openai_orchestrator_does_not_route_code_tasks(monkeypatch):
 
     assert route["code_offload"] is None
 
-
-def test_chat_short_circuits_to_claude_worker_when_code_offload_is_selected(monkeypatch):
-    cli = _import_cli()
-    shell = cli.HermesCLI(model="gpt-5.4-mini", compact=True, max_turns=1)
-    shell._set_early_turn_title = lambda *args, **kwargs: None
-    shell._resolve_turn_agent_config = lambda msg: {
-        "model": "gpt-5.4-mini",
-        "runtime": {"api_key": "sk", "base_url": "https://api.openai.com/v1", "provider": "openai", "api_mode": "responses", "command": None, "args": []},
-        "signature": ("gpt-5.4-mini", "openai", "https://api.openai.com/v1", "responses", None, ()),
-        "request_overrides": None,
-        "code_offload": {"worker": "claude-code", "model": "haiku", "effort": "low", "max_turns": 5, "visible": True},
-    }
-    shell._run_claude_code_worker = lambda *args, **kwargs: "claude result"
-    shell._ensure_runtime_credentials = lambda: (_ for _ in ()).throw(AssertionError("should not reach Hermes runtime credentials"))
-
-    assert shell.chat("Please fix cli.py") == "claude result"
 
 
 def test_cmd_model_falls_back_to_auto_on_invalid_provider(monkeypatch, capsys):

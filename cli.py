@@ -5147,25 +5147,12 @@ class HermesCLI:
         return action_hit and code_domain_hit
 
     def _resolve_code_offload_route(self, user_message: str) -> dict | None:
-        """Return a Claude Code worker plan for code-heavy turns.
+        """Disable Claude Code routing until further notice.
 
-        Only active when the orchestrator is OpenAI-backed. OWL/OpenRouter
-        turns stay on Hermes because the orchestrator is already the cheap
-        path.
+        The code-offload path remains defined so it can be restored later, but
+        it always returns ``None`` for now.
         """
-        if not self._is_openai_backed_orchestrator(self.provider, self.base_url):
-            return None
-        if not self._looks_like_code_task(user_message):
-            return None
-
-        model, effort, max_turns = self._pick_claude_code_profile(user_message)
-        return {
-            "worker": "claude-code",
-            "model": model,
-            "effort": effort,
-            "max_turns": max_turns,
-            "visible": True,
-        }
+        return None
 
     @staticmethod
     def _pick_claude_code_profile(user_message: str) -> tuple[str, str, int]:
