@@ -256,6 +256,16 @@ describe('createSlashHandler', () => {
     expect(ctx.gateway.rpc).not.toHaveBeenCalled()
   })
 
+  it('passes /n <title> through to the session lifecycle', () => {
+    const ctx = buildCtx()
+
+    createSlashHandler(ctx)('/n sprint planning')
+    getOverlayState().confirm?.onConfirm()
+
+    expect(ctx.session.newSession).toHaveBeenCalledWith('new session started', 'sprint planning')
+    expect(ctx.gateway.rpc).not.toHaveBeenCalled()
+  })
+
   it('keeps visible scrollback when branching a TUI session', async () => {
     patchUiState({ sid: 'sid-parent' })
     const rpc = vi.fn(() => Promise.resolve({ session_id: 'sid-branch', title: 'branch title' }))

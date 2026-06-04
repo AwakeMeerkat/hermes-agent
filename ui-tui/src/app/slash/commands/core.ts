@@ -147,7 +147,7 @@ export const coreCommands: SlashCommand[] = [
   },
 
   {
-    aliases: ['new'],
+    aliases: ['new', 'n'],
     help: 'start a new session',
     name: 'clear',
     run: (arg, ctx, cmd) => {
@@ -155,7 +155,7 @@ export const coreCommands: SlashCommand[] = [
         return
       }
 
-      const isNew = cmd.startsWith('/new')
+      const isNew = /^\/(?:new|n)(?:\s|$)/.test(cmd)
       const requestedTitle = isNew ? arg.trim() : ''
 
       const commit = () => {
