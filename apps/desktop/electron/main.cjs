@@ -85,6 +85,24 @@ const IS_PACKAGED = app.isPackaged
 const IS_MAC = process.platform === 'darwin'
 const IS_WINDOWS = process.platform === 'win32'
 const IS_WSL = isWslEnvironment()
+const IS_LINUX_WAYLAND = process.platform === 'linux' && Boolean(process.env.WAYLAND_DISPLAY)
+const HERMES_GPU_DISABLED = process.env.HERMES_DESKTOP_DISABLE_GPU !== '0'
+
+if (IS_LINUX_WAYLAND) {
+  // Electron can silently fall back to an unstable backend if the ozone hint
+  // is missing on a direct launch. Make the binary itself prefer Wayland so
+  // menu launches and terminal launches behave the same.
+  app.commandLine.appendSwitch('ozone-platform-hint', 'wayland')
+}
+
+if (HERMES_GPU_DISABLED) {
+  // The desktop app has a history of flashing under direct GPU compositing on
+  // this Wayland/NVIDIA stack. Default to the safer software path unless a
+  // wrapper explicitly opts back into GPU for testing.
+  app.disableHardwareAcceleration()
+  app.commandLine.appendSwitch('disable-gpu')
+}
+
 const APP_ROOT = app.getAppPath()
 
 // Remote displays (SSH X11 forwarding, VNC, RDP) make Chromium's GPU
